@@ -7,6 +7,10 @@ router = APIRouter(prefix="/api/dev", tags=["dev"])
 
 
 @router.get("/outbox")
-def outbox():
-    """Shows e-mails the app would have sent (verification / reset links) for demos."""
-    return list_outbox()
+def outbox(to: str = ""):
+    """Demo mailbox: the e-mails the app would have sent to ONE address (verification / reset links), newest first.
+    Without an address nothing is listed, so the page never shows everyone who has registered."""
+    to = to.strip().lower()
+    if not to:
+        return []
+    return list_outbox(limit=5, to=to)

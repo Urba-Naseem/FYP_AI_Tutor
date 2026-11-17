@@ -17,9 +17,17 @@ def send_email(to: str, subject: str, body: str) -> None:
     )
 
 
-def list_outbox(limit: int = 30) -> list[dict]:
+def list_outbox(limit: int = 30, to: str | None = None) -> list[dict]:
+    """Newest first; `to` keeps only the messages sent to that address (case-insensitive)."""
     folder = get_settings().path(get_settings().outbox_dir)
     if not folder.exists():
         return []
-    files = sorted(folder.glob("*.json"), reverse=True)[:limit]
-    return [json.loads(f.read_text()) for f in files]
+    out = []
+    for f in sorted(folder.glob("*.json"), reverse=True):
+        m = json.loads(f.read_text())
+        if to and str(m.get("to", "")).lower() != to.lower():
+            continue
+        out.append(m)
+        if len(out) >= limit:
+            break
+    return out

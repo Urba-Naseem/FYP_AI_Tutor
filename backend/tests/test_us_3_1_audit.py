@@ -66,7 +66,7 @@ def test_hash_chain_detects_tampering(client):
     for i in range(3):
         learning(db, u, "page_view", "unit", i, {"n": i})
     db.commit()
-    assert verify_chain(db) == {"valid": True, "checked": 3}
+    assert verify_chain(db) == {"valid": True, "checked": 3, "forks": []}
     # bypass the trigger to simulate an attacker editing the database file
     on_table = " ON audit_events" if db.get_bind().dialect.name == "postgresql" else ""
     db.execute(text(f"DROP TRIGGER audit_no_update{on_table}"))
