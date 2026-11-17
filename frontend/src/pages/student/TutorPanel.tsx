@@ -74,6 +74,11 @@ export function TutorDrawer({ courseId, topicId, request, open, onClose }: { cou
   const notes = useLoad(() => api<Note[]>(`/tutor/${courseId}/notes?topic_id=${topicId}`), [courseId, topicId])
   const seq = useRef(0)
   const end = useRef<HTMLDivElement>(null)
+  const self = useRef<HTMLElement>(null)
+  // on narrow screens the drawer sits in the page above the lesson: bring it into view when it opens
+  useEffect(() => {
+    if (open && window.innerWidth < 1100) self.current?.scrollIntoView({ block: 'start', behavior: window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+  }, [open, request?.key])
 
   const history = (upto = entries): Turn[] => upto.flatMap((e) => [
     { role: 'student' as const, text: e.ask }, { role: 'tutor' as const, text: e.reply.reply_md },
@@ -103,7 +108,7 @@ export function TutorDrawer({ courseId, topicId, request, open, onClose }: { cou
   }
 
   return (
-    <aside className={`tutor-drawer${open ? ' is-open' : ''}`} aria-label="AI tutor" aria-hidden={!open || undefined}>
+    <aside ref={self} className={`tutor-drawer${open ? ' is-open' : ''}`} aria-label="AI tutor" aria-hidden={!open || undefined}>
       <div className="tutor-drawer-head">
         <strong>Tutor</strong>
         <Segmented label="Tutor view" options={[{ value: 'tutor', label: 'Ask' }, { value: 'notes', label: `Notes & Cards${notes.data?.length ? ` · ${notes.data.length}` : ''}` }]} value={tab} onChange={setTab} />
@@ -111,19 +116,20 @@ export function TutorDrawer({ courseId, topicId, request, open, onClose }: { cou
       </div>
       {tab === 'tutor' ? (
         <div className="tutor-drawer-body">
-          {!entries.length && <p className="tutor-empty">Highlight any text in the lesson to have it explained, quiz yourself, or save it. Or ask below.</p>}
+          {!entries.length && <p className="tutor-empty">Highlight any text in the lesson to have it explained, quiz yourself, or save it. Or ask a question below — your tutor guides you to the answer with hints and questions rather than just telling you.</p>}
           {entries.map((e) => <ReplyCard key={e.id} e={e} busy={act.busy}
             onPill={(how) => ask('explain', { selection: e.quote ?? e.reply.reply_md.slice(0, 600), message: how === 'simpler' ? 'Explain it more simply, in plain words.' : 'Explain it with an everyday analogy.', label: how === 'simpler' ? 'Simpler' : 'Analogy', quote: e.quote })}
             onHint={() => ask('hint', { label: 'Hint please' })} onReveal={() => ask('reveal', { label: 'Reveal the answer' })} onAttempt={(a) => submitAttempt(e, a)}
+            onStuck={() => ask('ask', { message: "I'm stuck - please explain it to me.", label: "I'm stuck — explain it" })}
             onSave={(front, back, kind) => saveNote(front, back, e.reply.cited[0]?.title, kind)} />)}
           <div ref={end} />
           <Alert>{act.error}</Alert>
         </div>
       ) : <NotesList notes={notes.data ?? []} onDelete={async (id) => { if (await act.run(() => api(`/tutor/${courseId}/notes/${id}`, { method: 'DELETE' }), 'Deleted')) notes.reload() }} />}
       {tab === 'tutor' && (
-        <form className="tutor-input" onSubmit={(ev) => { ev.preventDefault(); if (text.trim()) { ask('explain', { message: text.trim(), label: text.trim() }); setText('') } }}>
-          <label htmlFor="tutor-text" className="sr-only">Ask about this lesson</label>
-          <input id="tutor-text" value={text} onChange={(ev) => setText(ev.target.value)} placeholder="Ask about this lesson…" />
+        <form className="tutor-input" onSubmit={(ev) => { ev.preventDefault(); if (text.trim()) { ask('ask', { message: text.trim(), label: text.trim() }); setText('') } }}>
+          <label htmlFor="tutor-text" className="sr-only">Ask about this lesson, or reply to your tutor</label>
+          <input id="tutor-text" value={text} onChange={(ev) => setText(ev.target.value)} placeholder={entries.at(-1)?.mode === 'ask' && entries.at(-1)?.reply.question ? 'Your thinking…' : 'Ask about this lesson…'} />
           <Button type="submit" size="sm" icon={<Send />} loading={act.busy} disabled={!text.trim()} aria-label="Ask the tutor">Ask</Button>
         </form>
       )}
@@ -131,9 +137,9 @@ export function TutorDrawer({ courseId, topicId, request, open, onClose }: { cou
   )
 }
 
-function ReplyCard({ e, busy, onPill, onHint, onReveal, onAttempt, onSave }: {
+function ReplyCard({ e, busy, onPill, onHint, onReveal, onAttempt, onSave, onStuck }: {
   e: Entry; busy: boolean; onPill: (how: 'simpler' | 'analogy') => void; onHint: () => void; onReveal: () => void
-  onAttempt: (a: string) => void; onSave: (front: string, back: string, kind: 'note' | 'flashcard') => void
+  onAttempt: (a: string) => void; onSave: (front: string, back: string, kind: 'note' | 'flashcard') => void; onStuck: () => void
 }) {
   const [attempt, setAttempt] = useState('')
   const [card, setCard] = useState<{ front: string; back: string } | null>(null)
@@ -163,7 +169,8 @@ function ReplyCard({ e, busy, onPill, onHint, onReveal, onAttempt, onSave }: {
       {e.reply.offline && <p className="small muted m-0">Tutor offline — showing the matching part of your lesson.</p>}
       <div className="reply-meta">
         {e.reply.cited.map((c) => <button key={c.n} type="button" className="sec-badge" onClick={() => goToSection(c.title)} aria-label={`Go to section ${c.n}: ${c.title}`}>§ {c.n}</button>)}
-        {!isQuiz && !e.reply.offline && <>
+        {e.mode === 'ask' && !!e.reply.question && !e.reply.offline && <button type="button" className="pill" onClick={onStuck} disabled={busy}>I'm stuck — explain it</button>}
+        {!isQuiz && !e.reply.offline && e.mode !== 'ask' && <>
           <button type="button" className="pill" onClick={() => onPill('simpler')} disabled={busy}>Simpler</button>
           <button type="button" className="pill" onClick={() => onPill('analogy')} disabled={busy}>Analogy</button>
         </>}

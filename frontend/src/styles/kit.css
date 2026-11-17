@@ -506,13 +506,25 @@ button.flashcard[aria-pressed='true'] { background: var(--good-bg); border-style
 .tutor-drawer-body { flex: 1; overflow-y: auto; padding: var(--space-4); display: grid; gap: var(--space-4); align-content: start; }
 .tutor-empty { margin: 0; color: var(--ink-faint); font-size: var(--text-sm); }
 .tutor-drawer .tutor-input { padding: var(--space-3); border-top: var(--border-width) solid var(--rule-soft); }
+/* narrow screens: the drawer is part of the page (above the lesson), never a sheet floating over the text */
 @media (max-width: 1099px) {
-  .tutor-drawer.is-open { position: fixed; left: 0; right: 0; bottom: 0; top: auto; max-height: 75vh; z-index: 40; border-radius: var(--radius-card) var(--radius-card) 0 0; box-shadow: var(--shadow-raised); }
+  .tutor-drawer.is-open { position: static; order: -1; max-height: 70vh; }
 }
 button.icon-ghost, button.icon-ghost:hover:not(:disabled) { display: inline-grid; place-items: center; width: 32px; height: 32px; min-height: 32px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--ink-soft); transform: none; }
 button.icon-ghost:hover:not(:disabled) { background: var(--rule-soft); color: var(--ink); }
 .icon-ghost svg { width: var(--icon-size); height: var(--icon-size); }
-button.tutor-fab { position: fixed; right: var(--space-4); bottom: var(--space-4); z-index: 30; display: inline-flex; align-items: center; gap: var(--space-2); min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius-pill); box-shadow: var(--shadow-raised); }
+/* The closed tutor is a docked tab that is part of the layout: a slim rail beside the lesson that stays in view while
+   scrolling (sticky inside the reader, so it moves with the page layout and never covers content); on narrow screens
+   a full-width button above the lesson. */
+button.tutor-rail { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2); min-height: 44px; padding: 0 var(--space-4); border-radius: var(--radius-control); }
+button.tutor-rail svg { width: var(--icon-size); height: var(--icon-size); flex: none; }
+@media (min-width: 1100px) {
+  .reader.has-rail { grid-template-columns: minmax(0, 1fr) auto; }
+  button.tutor-rail { position: sticky; top: var(--space-4); flex-direction: column; width: 56px; min-height: 9rem; padding: var(--space-3) 0; }
+  button.tutor-rail span { writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; }
+  button.tutor-rail:active:not(:disabled) { transform: none; }
+}
+@media (max-width: 1099px) { button.tutor-rail { order: -1; width: 100%; } }
 
 /* selection popover */
 .sel-pop { position: fixed; z-index: 50; transform: translate(-50%, -100%); display: flex; gap: 2px; padding: 3px; border: var(--border-width) solid var(--rule); border-radius: var(--radius-control); background: var(--sheet); box-shadow: var(--shadow-raised); }
@@ -543,3 +555,79 @@ button.foot-btn:hover:not(:disabled) { color: var(--action); }
 .card-editor label { font-size: var(--text-caption); color: var(--ink-soft); }
 .tutor-drawer .tutor-notes { padding: var(--space-4); grid-template-columns: minmax(0, 1fr); overflow-y: auto; }
 .tutor-note { padding: var(--space-3); border: var(--border-width) solid var(--rule-soft); border-radius: var(--radius-control); }
+
+
+/* ── Formative quiz: question navigator, mixed question types, result, debrief ── */
+.quiz-outcome { max-width: var(--reading-width, 46rem); }
+.qnav { display: flex; flex-wrap: wrap; gap: var(--space-1); margin: var(--space-3) 0 0; }
+button.qnav-btn, button.qnav-btn:hover:not(:disabled) { min-width: 36px; width: 36px; min-height: 36px; height: 36px; padding: 0; border: var(--border-width) solid var(--rule); border-radius: var(--radius-pill); background: var(--sheet); color: var(--ink); font-size: var(--text-sm); font-weight: var(--weight-bold); font-variant-numeric: tabular-nums; transform: none; }
+button.qnav-btn:hover:not(:disabled) { border-color: var(--action); }
+button.qnav-btn.is-done { background: var(--action-tint); border-color: var(--action); color: var(--action); }
+button.qnav-btn.is-current, button.qnav-btn.is-current:hover:not(:disabled) { background: var(--action); border-color: var(--action); color: var(--on-action); }
+.qtype-tag { display: inline-block; margin: var(--space-4) 0 0; padding: 2px var(--space-2); border-radius: var(--radius-pill); background: var(--rule-soft); color: var(--ink-soft); font-size: var(--text-caption); font-weight: var(--weight-bold); }
+.question .question-stem { margin-top: var(--space-2); overflow-wrap: anywhere; }
+.option .option-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.question textarea, .question .field input { width: 100%; }
+.quiz-result { display: grid; gap: var(--space-4); max-width: var(--reading-width, 46rem); margin: 0 auto; }
+.quiz-result > .card { margin: 0; }
+.result-answers > summary { cursor: pointer; list-style-position: outside; }
+.result-answers > summary h3 { display: inline; font-size: var(--text-lg, 1.125rem); }
+.result-answers[open] > summary { margin-bottom: var(--space-4); }
+.qreview-written { display: grid; gap: var(--space-2); margin: var(--space-4) 0; }
+.qreview-written > div { display: grid; grid-template-columns: minmax(7rem, auto) minmax(0, 1fr); gap: var(--space-3); padding: var(--space-2) var(--space-3); border: var(--border-width) solid var(--rule); border-radius: var(--radius-control); background: var(--sheet); }
+.qreview-written > div.is-correct { border-color: var(--good); background: var(--good-bg); }
+.qreview-written > div.is-chosen-wrong { border-color: var(--bad); background: var(--bad-bg); }
+.qreview-written dt { font-weight: var(--weight-bold); color: var(--ink-soft); }
+.qreview-written dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+@media (max-width: 479px) { .qreview-written > div { grid-template-columns: minmax(0, 1fr); gap: var(--space-1); } }
+.qreview-head > span { min-width: 0; }
+.qreview-text, .qreview-options li > span { min-width: 0; overflow-wrap: anywhere; }
+
+.debrief { display: grid; gap: var(--space-4); margin: 0; }
+.debrief-head { display: flex; gap: var(--space-3); align-items: center; }
+.debrief-head h2 { font-size: var(--text-xl, 1.25rem); }
+.debrief-thread { display: grid; gap: var(--space-3); max-height: 32rem; overflow-y: auto; padding: var(--space-1); }
+.debrief-msg { display: flex; gap: var(--space-2); align-items: flex-start; min-width: 0; }
+.debrief-msg.is-student { justify-content: flex-end; }
+.debrief-bubble { min-width: 0; max-width: 85%; padding: var(--space-3) var(--space-4); border: var(--border-width) solid var(--rule); border-radius: var(--radius-card); overflow-wrap: anywhere; }
+.debrief-msg.is-teacher .debrief-bubble { background: var(--sheet-raised); border-left: 3px solid var(--action); }
+.debrief-msg.is-student .debrief-bubble { background: var(--action-tint); white-space: pre-wrap; }
+.debrief-bubble .markdown > :first-child { margin-top: 0; }
+.debrief-bubble .markdown > :last-child { margin-bottom: 0; }
+.debrief-bubble blockquote { margin: var(--space-2) 0; padding-left: var(--space-3); border-left: 2px solid var(--rule); color: var(--ink-soft); }
+.debrief-form { display: grid; gap: var(--space-2); }
+.debrief-form textarea { width: 100%; }
+.debrief-starters { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.debrief-starters button.pill { min-height: 32px; padding: 0 var(--space-3); font-size: var(--text-sm); white-space: normal; text-align: left; }
+.debrief-actions { display: flex; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.debrief-findings { padding: var(--space-3) var(--space-4); border-radius: var(--radius-control); background: var(--rule-soft); }
+.debrief-findings ul { margin: var(--space-2) 0 0; padding-left: var(--space-6); }
+@media (max-width: 479px) { .debrief-bubble { max-width: 100%; } .debrief-msg.is-teacher > .tutor-avatar { display: none; } }
+
+/* practice hints */
+.practice-hints { display: grid; gap: var(--space-2); justify-items: start; margin-top: var(--space-2); }
+.practice-hint { display: flex; gap: var(--space-2); margin: 0; padding: var(--space-2) var(--space-3); border-left: 3px solid var(--color-warning); background: var(--sheet-raised); border-radius: 0 var(--radius-control) var(--radius-control) 0; overflow-wrap: anywhere; }
+.practice-hint svg { width: var(--icon-size-inline); height: var(--icon-size-inline); flex: none; margin-top: 3px; }
+.markdown-inline, .markdown-inline p { display: inline; margin: 0; }
+
+/* ── No overlapping text: long words, URLs and code wrap instead of spilling over neighbours ── */
+h1, h2, h3, h4, p, li, dd, dt, label, legend, summary, figcaption, blockquote { overflow-wrap: break-word; }
+.markdown { overflow-wrap: break-word; min-width: 0; }
+.markdown pre, .markdown .katex-display { max-width: 100%; overflow-x: auto; }
+.markdown img, .markdown svg { max-width: 100%; height: auto; }
+.phead > div { min-width: 0; }
+.question-top > span, .tutor-drawer-head > *, .reply, .reply-quote { min-width: 0; }
+/* tutor header: title + close on the first row, the Ask / Notes switch below - nothing wraps awkwardly in a narrow drawer */
+.tutor-drawer-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; row-gap: var(--space-2); }
+.tutor-drawer-head > .kseg { grid-column: 1 / -1; grid-row: 2; justify-self: start; max-width: 100%; }
+.tutor-drawer-head > button { grid-column: 2; grid-row: 1; }
+/* demo mailbox: one person's messages */
+.mail { display: grid; gap: var(--space-2); margin-top: var(--space-4); padding-top: var(--space-4); border-top: var(--border-width) solid var(--rule-soft); min-width: 0; }
+.mail pre.plain { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+/* practice / review question cards without an inner body: give the text room from the card border */
+.qreview-item:not(:has(> .kcard-body)) { padding: var(--space-4) var(--space-6); }
+@media (max-width: 479px) { .qreview-item:not(:has(> .kcard-body)) { padding: var(--space-3) var(--space-4); } }
+.qreview > li + li { margin-top: var(--space-3); }
+.kcard-head, .kcard-head > * { min-width: 0; }
+.option-mark { white-space: nowrap; }
+@media (max-width: 479px) { .option { flex-wrap: wrap; } .option-mark { margin-left: calc(var(--space-3) + 20px); white-space: normal; } }

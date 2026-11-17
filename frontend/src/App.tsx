@@ -42,6 +42,14 @@ const isWide = () => typeof window.matchMedia !== 'function' || window.matchMedi
 
 function useNavOpen() {
   const [open, setOpen] = useState(() => (isWide() ? read('navOpen') !== '0' : false))
+  // follow the breakpoint: shrinking the window (or turning a tablet) must not leave the drawer open over the page
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return
+    const mq = window.matchMedia('(min-width: 860px)')
+    const onChange = () => setOpen(mq.matches ? read('navOpen') !== '0' : false)
+    mq.addEventListener?.('change', onChange)
+    return () => mq.removeEventListener?.('change', onChange)
+  }, [])
   function toggle() {
     setOpen((o) => {
       if (isWide()) write('navOpen', o ? '0' : '1')

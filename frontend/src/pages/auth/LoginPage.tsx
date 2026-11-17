@@ -49,7 +49,6 @@ export default function LoginPage() {
       <nav className="auth-links" aria-label="Account help">
         <Link to="/forgot-password">Forgot password?</Link>
         <Link to="/register">New student? Register</Link>
-        <Link to="/dev/outbox">Demo mailbox</Link>
       </nav>
     </AuthShell>
   )

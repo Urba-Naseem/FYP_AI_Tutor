@@ -9,10 +9,31 @@ import ScopeHint, { AssignHint } from '../../components/ScopeHint'
 import { toast } from '../../components/toast'
 import { Alert, Badge, EmptyState, Loading, useAction, useLoad } from '../../components/ui'
 
-type Item = { id: number; clo_id: number; clo_code: string; purpose: string; stem: string; options: string[]; answer_index: number; explanation: string; hints: string[]; difficulty: number; status: string; origin: string; version_no: number; review_note: string | null }
+type QType = 'mcq' | 'true_false' | 'fill_blank' | 'short_answer'
+type Item = {
+  id: number; clo_id: number; clo_code: string; purpose: string; type?: QType; stem: string; options: string[]; answer_index: number; explanation: string; hints: string[]
+  answer?: string; accepted?: string[]; key_points?: string[]; difficulty: number; status: string; origin: string; version_no: number; review_note: string | null
+}
 type Cov = { min_items_per_clo: number; items_per_clo: number; published: boolean; complete: boolean; short: string[]; clos: { clo_id: number; clo_code: string; description: string; approved: number; pending: number; difficulties: number[]; meets_minimum: boolean }[] }
 
 const TYPE_LABEL: Record<string, string> = { diagnostic: 'Diagnostic', formative: 'Formative', reteach: 'Reteach' }
+const QTYPE_LABEL: Record<QType, string> = { mcq: 'Multiple choice', true_false: 'True / false', fill_blank: 'Fill in the blank', short_answer: 'Short answer' }
+const lines = (s: string) => s.split('\n').map((x) => x.trim()).filter(Boolean)
+
+/** The answer key of a written question, as the teacher reviews it before approving. */
+function WrittenKey({ it }: { it: Item }) {
+  if (it.type === 'true_false') return <p className="text-success"><Check className="icon-inline" aria-hidden="true" /> <strong>Answer: {it.answer === 'false' ? 'False' : 'True'}</strong></p>
+  if (it.type === 'fill_blank') return (
+    <p><span className="text-success"><Check className="icon-inline" aria-hidden="true" /> <strong>Answer: {it.answer}</strong></span>
+      {(it.accepted ?? []).filter((a) => a !== it.answer).length > 0 && <span className="small muted"> · also accepted: {(it.accepted ?? []).filter((a) => a !== it.answer).join(', ')}</span>}</p>
+  )
+  return (
+    <div className="small">
+      <p className="m-0"><strong>Model answer:</strong> {it.answer}</p>
+      {(it.key_points ?? []).length > 0 && <><p className="m-0 mt-2"><strong>A good answer mentions:</strong></p><ul>{it.key_points!.map((k, i) => <li key={i}>{k}</li>)}</ul></>}
+    </div>
+  )
+}
 
 /** ONE approval for the whole questionnaire (all types): everything still in the drafts is approved together. */
 function ApproveQuestionnaire({ courseId, drafts, onDone }: { courseId: string; drafts: Item[]; onDone: () => void }) {
@@ -38,22 +59,39 @@ function ApproveQuestionnaire({ courseId, drafts, onDone }: { courseId: string; 
 function ItemCard({ it, onDone }: { it: Item; onDone: () => void }) {
   const act = useAction()
   const [editing, setEditing] = useState(false)
-  const [draft, setDraft] = useState({ stem: it.stem, options: it.options.join('\n'), answer_index: it.answer_index, explanation: it.explanation, hints: it.hints.join('\n') })
+  const t: QType = it.type ?? 'mcq'
+  const [draft, setDraft] = useState({ stem: it.stem, options: it.options.join('\n'), answer_index: it.answer_index, explanation: it.explanation, hints: it.hints.join('\n'),
+    answer: it.answer ?? '', accepted: (it.accepted ?? []).join('\n'), key_points: (it.key_points ?? []).join('\n') })
   async function save() {
-    const body = { stem: draft.stem, options: draft.options.split('\n').map((s) => s.trim()).filter(Boolean), answer_index: Number(draft.answer_index), explanation: draft.explanation, hints: draft.hints.split('\n').filter(Boolean) }
+    const common = { stem: draft.stem, explanation: draft.explanation, hints: lines(draft.hints) }
+    const body = t === 'mcq' ? { ...common, options: lines(draft.options), answer_index: Number(draft.answer_index) }
+      : t === 'true_false' ? { ...common, answer: draft.answer }
+      : t === 'fill_blank' ? { ...common, answer: draft.answer, accepted: lines(draft.accepted) }
+      : { ...common, answer: draft.answer, key_points: lines(draft.key_points) }
     if (await act.run(() => api(`/items/${it.id}`, { method: 'PATCH', body }))) { setEditing(false); onDone() }
   }
   return (
     <article className="card">
       <div className="spread">
-        <div className="row"><strong>{it.clo_code}</strong><Badge value={TYPE_LABEL[it.purpose] ?? it.purpose} tone="info" /><Badge value={`v${it.version_no}`} /><Badge value={it.status} /><Badge value={it.origin} /><span className="small muted">Difficulty {it.difficulty}</span></div>
+        <div className="row"><strong>{it.clo_code}</strong><Badge value={TYPE_LABEL[it.purpose] ?? it.purpose} tone="info" />{t !== 'mcq' && <Badge value={QTYPE_LABEL[t]} tone="info" />}<Badge value={`v${it.version_no}`} /><Badge value={it.status} /><Badge value={it.origin} /><span className="small muted">Difficulty {it.difficulty}</span></div>
         {it.status !== 'rejected' && it.status !== 'retired' && <button className="secondary small" onClick={() => setEditing(!editing)}>{editing ? 'Cancel editing' : <><Pencil aria-hidden="true" />Edit item</>}</button>}
       </div>
       {editing ? (
         <div className="stack">
           <div><label htmlFor={`ib-stem-${it.id}`}>Question</label><textarea id={`ib-stem-${it.id}`} value={draft.stem} onChange={(e) => setDraft({ ...draft, stem: e.target.value })} /></div>
-          <div><label htmlFor={`ib-opts-${it.id}`}>Options (one per line)</label><textarea id={`ib-opts-${it.id}`} value={draft.options} onChange={(e) => setDraft({ ...draft, options: e.target.value })} /></div>
-          <div><label htmlFor={`ib-ans-${it.id}`}>Correct option number (0–3)</label><input id={`ib-ans-${it.id}`} type="number" min={0} max={3} value={draft.answer_index} onChange={(e) => setDraft({ ...draft, answer_index: Number(e.target.value) })} /></div>
+          {t === 'mcq' && <>
+            <div><label htmlFor={`ib-opts-${it.id}`}>Options (one per line)</label><textarea id={`ib-opts-${it.id}`} value={draft.options} onChange={(e) => setDraft({ ...draft, options: e.target.value })} /></div>
+            <div><label htmlFor={`ib-ans-${it.id}`}>Correct option number (0–3)</label><input id={`ib-ans-${it.id}`} type="number" min={0} max={3} value={draft.answer_index} onChange={(e) => setDraft({ ...draft, answer_index: Number(e.target.value) })} /></div>
+          </>}
+          {t === 'true_false' && (
+            <div><label htmlFor={`ib-tf-${it.id}`}>Correct answer</label>
+              <select id={`ib-tf-${it.id}`} value={draft.answer} onChange={(e) => setDraft({ ...draft, answer: e.target.value })}><option value="true">True</option><option value="false">False</option></select></div>
+          )}
+          {(t === 'fill_blank' || t === 'short_answer') && (
+            <div><label htmlFor={`ib-key-${it.id}`}>{t === 'fill_blank' ? 'Answer for the blank (_____ in the question)' : 'Model answer'}</label><textarea id={`ib-key-${it.id}`} value={draft.answer} onChange={(e) => setDraft({ ...draft, answer: e.target.value })} /></div>
+          )}
+          {t === 'fill_blank' && <div><label htmlFor={`ib-acc-${it.id}`}>Other accepted answers (one per line)</label><textarea id={`ib-acc-${it.id}`} value={draft.accepted} onChange={(e) => setDraft({ ...draft, accepted: e.target.value })} /></div>}
+          {t === 'short_answer' && <div><label htmlFor={`ib-kp-${it.id}`}>Key points a good answer must contain (one per line)</label><textarea id={`ib-kp-${it.id}`} value={draft.key_points} onChange={(e) => setDraft({ ...draft, key_points: e.target.value })} /></div>}
           <div><label htmlFor={`ib-exp-${it.id}`}>Explanation</label><textarea id={`ib-exp-${it.id}`} value={draft.explanation} onChange={(e) => setDraft({ ...draft, explanation: e.target.value })} /></div>
           <div><label htmlFor={`ib-hints-${it.id}`}>Hints (one per line, must not reveal the answer)</label><textarea id={`ib-hints-${it.id}`} value={draft.hints} onChange={(e) => setDraft({ ...draft, hints: e.target.value })} /></div>
           <div className="card-actions"><button onClick={save} disabled={act.busy} aria-busy={act.busy || undefined}>{it.status === 'approved' ? 'Save as new version' : 'Save item'}</button></div>
@@ -61,7 +99,7 @@ function ItemCard({ it, onDone }: { it: Item; onDone: () => void }) {
       ) : (
         <>
           <Markdown>{it.stem}</Markdown>
-          <ol type="A">{it.options.map((o, i) => <li key={i} className={i === it.answer_index ? 'text-success' : undefined}>{o}{i === it.answer_index && <strong> <Check className="icon-inline" aria-hidden="true" /> Correct answer</strong>}</li>)}</ol>
+          {t === 'mcq' ? <ol type="A">{it.options.map((o, i) => <li key={i} className={i === it.answer_index ? 'text-success' : undefined}>{o}{i === it.answer_index && <strong> <Check className="icon-inline" aria-hidden="true" /> Correct answer</strong>}</li>)}</ol> : <WrittenKey it={it} />}
           <details><summary className="small">Explanation &amp; hints</summary><p className="small">{it.explanation}</p><ul className="small">{it.hints.map((h, i) => <li key={i}>{h}</li>)}</ul></details>
         </>
       )}
@@ -90,12 +128,13 @@ export default function ItemBankPage() {
   const items = useLoad(() => (courseId ? api<Item[]>(`/items?course_id=${courseId}${status === 'pending' ? '' : `&purpose=${purpose}`}${status ? `&status=${status}` : ''}`) : Promise.resolve([] as Item[])), [courseId, purpose, status])
   const act = useAction()
   const [count, setCount] = useState(3)
+  const [qtype, setQtype] = useState<'mcq' | 'written'>('mcq')
   const reload = () => { cov.reload(); items.reload() }
 
   return (
     <>
       <h1>Item bank</h1>
-      <p className="muted">Generate questions for each CLO from its learning outcome (suggested reading is used when you have added it), then approve them. Diagnostic tests can only be published when every CLO has the minimum number of approved items.</p>
+      <p className="muted">Generate questions for each CLO from its learning outcome (suggested reading is used when you have added it), then approve them. Formative quizzes have 10 questions: 3–5 true/false, fill-in-the-blank or short-answer questions and multiple choice for the rest — only questions you approve are ever used. Diagnostic tests can only be published when every CLO has the minimum number of approved items.</p>
       <AutomationNote what="Test questions" needsApproval />
       <div className="table-tools">
         <label className="inline-field"><span className="inline-field-label">Course</span>
@@ -120,8 +159,14 @@ export default function ItemBankPage() {
             <div className="row">
               <label htmlFor="gc" className="m-0">Items per CLO</label>
               <input id="gc" className="input-narrow" type="number" min={1} max={10} value={count} onChange={(e) => setCount(Number(e.target.value))} />
+              {purpose === 'formative' && (
+                <label className="inline-field"><span className="sr-only">Question type</span>
+                  <select value={qtype} onChange={(e) => setQtype(e.target.value as 'mcq' | 'written')} aria-label="Question type">
+                    <option value="mcq">Multiple choice</option><option value="written">True/false, fill-in &amp; short answer</option>
+                  </select></label>
+              )}
               <button className={purpose === 'diagnostic' ? 'secondary' : undefined} disabled={act.busy} aria-busy={act.busy || undefined} onClick={async () => {
-                const r = await act.run(() => api<{ created: unknown[]; problems: string[]; origins: string[] }>('/items/generate', { body: { course_id: Number(courseId), purpose, count } }))
+                const r = await act.run(() => api<{ created: unknown[]; problems: string[]; origins: string[] }>('/items/generate', { body: { course_id: Number(courseId), purpose, count, question_type: purpose === 'formative' ? qtype : 'mcq' } }))
                 if (r) { act.setMessage(`Generated ${r.created.length} items (${r.origins.join(', ') || 'none'}) — review them below.${r.problems.length ? ' ' + r.problems.join(' ') : ''}`); reload() }
               }}>{act.busy ? 'Generating… (one AI call per outcome, up to a minute)' : 'Generate with AI'}</button>
               {purpose === 'diagnostic' && (

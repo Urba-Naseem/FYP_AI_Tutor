@@ -70,7 +70,7 @@ export default function AIGovernancePage() {
           <option value="">Choose a course…</option>{courses.data?.filter((c) => c.status !== 'superseded').map((c) => <option key={c.id} value={c.id}>{c.code} {c.title}</option>)}
         </select>
       </div>
-      {testCourse && <AskTutor courseId={Number(testCourse)} />}
+      {testCourse && <AskTutor courseId={Number(testCourse)} socratic={false} />}
     </>
   )
 }

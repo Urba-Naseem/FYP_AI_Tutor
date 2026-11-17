@@ -32,7 +32,7 @@ export function RegisterPage() {
       <div className="card">
         <h1>Student registration</h1>
         {done ? (
-          <Alert kind="success">{done} <Link to="/dev/outbox">Open demo mailbox</Link></Alert>
+          <Alert kind="success">{done} <Link to={`/dev/outbox?to=${encodeURIComponent(f.email.trim())}`}>Open your demo mailbox</Link></Alert>
         ) : (
           <form onSubmit={submit}>
             <div className="field"><label htmlFor="rn">Full name</label><input id="rn" required autoComplete="name" value={f.full_name} onChange={(e) => setF({ ...f, full_name: e.target.value })} /></div>

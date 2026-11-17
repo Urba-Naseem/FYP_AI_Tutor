@@ -55,7 +55,7 @@ export default function TopicPage() {
       {l.loading && !x ? <Skeleton lines={8} label="Writing your lesson — this can take a few seconds" /> : l.error ? <Alert onRetry={l.reload}>{l.error}</Alert> : !x ? (
         <EmptyState icon={ListChecks} title="Topic not found">Go back to your course and pick a topic from your path.</EmptyState>
       ) : (
-        <div className={`reader${drawerOpen ? ' has-drawer' : ''}`}>
+        <div className={`reader${drawerOpen ? ' has-drawer' : ' has-rail'}`}>
           <div className="reader-main">
             <article className="topic-lesson reader-pane" aria-labelledby="lesson-title">
               <h2 id="lesson-title" className="sr-only">Your lesson</h2>
@@ -78,14 +78,14 @@ export default function TopicPage() {
               <Alert>{act.error}</Alert>
             </article>
             <TopicReading courseId={courseId} query={`${x.topic_title} ${x.description}`} />
-            <PracticePanel courseId={courseId} cloId={x.clo_id} topicId={x.topic_id} cloCode={x.clo_code} title="Practice this topic" />
+            <PracticePanel key={x.topic_id} courseId={courseId} cloId={x.clo_id} topicId={x.topic_id} cloCode={x.clo_code} title="Practice this lecture" />
             <nav className="topic-nav" aria-label="Topics">
               {x.previous_topic ? <Link className="kbtn kbtn-secondary kbtn-md" to={`/learn/${courseId}/topic/${x.previous_topic.id}`}><ArrowLeft aria-hidden="true" />{x.previous_topic.title}</Link> : <span />}
               {x.next_topic && <Link className="kbtn kbtn-secondary kbtn-md" to={`/learn/${courseId}/topic/${x.next_topic.id}`}>{x.next_topic.title}<ArrowRight aria-hidden="true" /></Link>}
             </nav>
           </div>
           <TutorDrawer courseId={courseId} topicId={x.topic_id} request={request} open={drawerOpen} onClose={() => setDrawer(false)} />
-          {!drawerOpen && <button type="button" className="tutor-fab" onClick={() => setDrawer(true)} aria-label="Open the tutor"><Sparkles aria-hidden="true" />Tutor</button>}
+          {!drawerOpen && <button type="button" className="tutor-rail" onClick={() => setDrawer(true)} aria-label="Open the AI tutor"><Sparkles aria-hidden="true" /><span>Ask the tutor</span></button>}
           <SelectionPopover onAction={async (a, text, section) => {
             if (a === 'note') { await act.run(() => api(`/tutor/${courseId}/notes`, { body: { topic_id: x.topic_id, kind: 'note', front: `> ${text}`, section } }), 'Saved to Notes & Cards'); return }
             setDrawer(true)

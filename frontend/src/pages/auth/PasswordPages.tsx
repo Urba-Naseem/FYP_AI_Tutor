@@ -31,7 +31,7 @@ export function ForgotPasswordPage() {
             <input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
           <Alert>{error}</Alert>
-          <Alert kind="success">{msg}</Alert>
+          {msg && <Alert kind="success">{msg} <Link to={`/dev/outbox?to=${encodeURIComponent(email.trim())}`}>Open your demo mailbox</Link></Alert>}
           <button type="submit">Send reset link</button>
         </form>
         <p className="small"><Link to="/login">Back to sign in</Link></p>
@@ -99,26 +99,45 @@ function linkify(text: string) {
   )
 }
 
+/** Demo mailbox (no SMTP in development): shows only the e-mails sent to ONE address - the student who just
+ *  registered or asked for a reset - never a list of everyone. Opened as /dev/outbox?to=<address>. */
 export function DevOutboxPage() {
-  const { data, error, reload } = useLoad(() => api<Mail[]>('/dev/outbox'))
+  const [params, setParams] = useSearchParams()
+  const to = (params.get('to') ?? '').trim()
+  const [email, setEmail] = useState(to)
+  const { data, error, reload, loading } = useLoad(() => (to ? api<Mail[]>(`/dev/outbox?to=${encodeURIComponent(to)}`) : Promise.resolve([] as Mail[])), [to])
   return (
-    <AuthShell wide="wide">
+    <AuthShell wide="medium">
       <div className="brand"><span className="brand-mark" aria-hidden="true">A</span>AI Tutor</div>
-      <div className="spread">
-        <h1>Demo mailbox</h1>
-        <button className="secondary" onClick={reload}>Refresh</button>
-      </div>
-      <p className="muted small">No SMTP server is configured, so e-mails the app sends are shown here (development only).</p>
-      <Alert>{error}</Alert>
-      {data?.length === 0 && <EmptyState icon={Mail} title="No e-mails yet">E-mails the app sends (verification, password reset) will appear here.</EmptyState>}
-      {data?.map((m, i) => (
-        <div className="card" key={i}>
-          <div className="spread"><strong>{m.subject}</strong><span className="small muted">{fmtDate(m.sent_at)}</span></div>
-          <div className="small muted">To: {m.to}</div>
-          <pre className="plain" tabIndex={0}>{linkify(m.body)}</pre>
+      <div className="card">
+        <div className="spread">
+          <h1>Your inbox</h1>
+          {to && <button className="secondary small" onClick={reload} disabled={loading}>Refresh</button>}
         </div>
-      ))}
-      <p><Link to="/login">Back to sign in</Link></p>
+        <p className="muted small">E-mail is not connected in this demo, so the message we sent you is shown here.</p>
+        {!to ? (
+          <form onSubmit={(e) => { e.preventDefault(); if (email.trim()) setParams({ to: email.trim() }) }}>
+            <div className="field">
+              <label htmlFor="mb-email">Your e-mail address</label>
+              <input id="mb-email" type="email" required autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+            <button type="submit">Show my e-mails</button>
+          </form>
+        ) : (
+          <>
+            <p className="small m-0">Messages to <strong className="break-all">{to}</strong></p>
+            <Alert>{error}</Alert>
+            {data?.length === 0 && <EmptyState icon={Mail} title="No e-mail yet">If you have just registered or asked for a reset, wait a moment and press Refresh.</EmptyState>}
+            {data?.map((m, i) => (
+              <article className={`mail${i === 0 ? ' is-latest' : ''}`} key={i}>
+                <div className="spread"><strong>{m.subject}</strong><span className="small muted">{fmtDate(m.sent_at)}</span></div>
+                <pre className="plain" tabIndex={0}>{linkify(m.body)}</pre>
+              </article>
+            ))}
+          </>
+        )}
+      </div>
+      <p className="small"><Link to="/login">Back to sign in</Link></p>
     </AuthShell>
   )
 }

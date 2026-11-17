@@ -1,4 +1,4 @@
-import { Check, Copy, Flag, Info, Send, ShieldCheck, Sparkles } from 'lucide-react'
+import { Check, Copy, Flag, Info, LifeBuoy, Send, ShieldCheck, Sparkles } from 'lucide-react'
 import { Fragment, useId, useState, type FormEvent } from 'react'
 import { api } from '../api/client'
 import { askText } from './dialogApi'
@@ -34,8 +34,10 @@ function CitedText({ text, citations, anchor }: { text: string; citations: Citat
   )
 }
 
-/** Course-scoped tutor: answers within the course's learning outcomes (citing suggested reading when it matches) and can be flagged for review. */
-export default function AskTutor({ courseId, context }: { courseId: number; context?: string }) {
+/** Course-scoped tutor: answers within the course's learning outcomes (citing suggested reading when it matches) and can be
+ *  flagged for review. For students it uses Socratic nudging: a hint and a guiding question first, building on their
+ *  replies, and a full explanation once they have reasoned it through or say they are stuck. */
+export default function AskTutor({ courseId, context, socratic = true }: { courseId: number; context?: string; socratic?: boolean }) {
   const [q, setQ] = useState('')
   const [turns, setTurns] = useState<Turn[]>([])
   const [pending, setPending] = useState('')
@@ -43,16 +45,19 @@ export default function AskTutor({ courseId, context }: { courseId: number; cont
   const act = useAction()
   const uid = useId().replace(/:/g, '')
 
-  async function ask(e: FormEvent) {
-    e.preventDefault()
-    const question = q.trim()
+  async function send(question: string) {
     if (!question) return
     setPending(question)
     setQ('')
-    const r = await act.run(() => api<Answer>('/ai/ask', { body: { course_id: courseId, question: context ? `${question} (context: ${context})` : question } }))
+    const history = turns.slice(-4).map((t) => ({ question: t.question, answer: t.answer.answer }))
+    const r = await act.run(() => api<Answer>('/ai/ask', { body: { course_id: courseId, question: context ? `${question} (context: ${context})` : question, history } }))
     setPending('')
     if (r) setTurns((t) => [...t, { id: t.length + 1, question, answer: r, flagged: false }])
     else setQ(question)
+  }
+  function ask(e: FormEvent) {
+    e.preventDefault()
+    send(q.trim())
   }
 
   async function flag(turn: Turn) {
@@ -85,7 +90,7 @@ export default function AskTutor({ courseId, context }: { courseId: number; cont
         <div className={`tutor-avatar${thinking ? ' thinking' : ''}`} aria-hidden="true"><Sparkles className="icon" /></div>
         <div>
           <h2 id={`${uid}-title`}>Ask the tutor</h2>
-          <p className="small muted">Answers stay within your course's learning outcomes.</p>
+          <p className="small muted">{socratic ? "Your tutor guides you with hints and questions first, so you work it out yourself. Say you're stuck any time." : "Answers stay within your course's learning outcomes."}</p>
         </div>
       </header>
 
@@ -115,6 +120,9 @@ export default function AskTutor({ courseId, context }: { courseId: number; cont
                     </ol>
                   )}
                   <div className="msg-actions">
+                    {socratic && t.id === turns.length && !refused && t.answer.mode !== 'offline' && /\?\s*$/.test(t.answer.answer.trim()) && (
+                      <button type="button" className="ghost small" onClick={() => send("I'm stuck - please explain it to me.")} disabled={act.busy}><LifeBuoy aria-hidden="true" />I'm stuck — explain it</button>
+                    )}
                     <button type="button" className="ghost small" onClick={() => copy(t)}><Copy aria-hidden="true" />{copied === t.id ? 'Copied' : 'Copy answer'}</button>
                     {t.answer.ai_call_id && (t.flagged
                       ? <span className="small muted"><Check className="icon-inline" aria-hidden="true" /> Thanks — your instructor will review this answer.</span>
@@ -136,7 +144,7 @@ export default function AskTutor({ courseId, context }: { courseId: number; cont
       <Alert>{act.error}</Alert>
 
       <form onSubmit={ask} className="composer">
-        <input aria-labelledby={`${uid}-title`} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ask about this material…" required />
+        <input aria-labelledby={`${uid}-title`} value={q} onChange={(e) => setQ(e.target.value)} placeholder={turns.length ? 'Reply with your thinking, or ask something new…' : 'Ask about this material…'} required />
         <button disabled={act.busy} aria-busy={act.busy || undefined}>{act.busy ? 'Thinking…' : <><Send aria-hidden="true" />Send question</>}</button>
       </form>
     </section>

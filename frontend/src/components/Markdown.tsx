@@ -72,9 +72,11 @@ const isMermaid = (node: ReactNode) =>
   isValidElement<{ className?: string }>(node) && !!node.props.className?.includes('language-mermaid')
 
 /** Markdown with LaTeX maths (KaTeX), syntax-highlighted code, tables and Mermaid diagrams. */
-export default function Markdown({ children }: { children: string }) {
+/** `inline` renders paragraphs as spans, for short text inside a line (answer options, labels). */
+export default function Markdown({ children, inline }: { children: string; inline?: boolean }) {
+  const Wrap = inline ? 'span' : 'div'
   return (
-    <div className="markdown">
+    <Wrap className={inline ? 'markdown markdown-inline' : 'markdown'}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex, rehypeHighlight]}
@@ -98,6 +100,7 @@ export default function Markdown({ children }: { children: string }) {
             const { children: c, ...rest } = withoutNode(props)
             return <h3 id={slugify(textOf(c))} {...rest}>{c}</h3>
           },
+          ...(inline ? { p(props: { children?: ReactNode }) { return <span>{props.children}</span> } } : {}),
           code(props) {
             const { className, children: c, ...rest } = withoutNode(props)
             if (className?.includes('language-mermaid')) return <Mermaid code={String(c).trim()} />
@@ -107,6 +110,6 @@ export default function Markdown({ children }: { children: string }) {
       >
         {children}
       </ReactMarkdown>
-    </div>
+    </Wrap>
   )
 }
