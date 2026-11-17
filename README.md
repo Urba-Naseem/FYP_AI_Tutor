@@ -8,7 +8,18 @@ and Socratic hints, get retaught when below mastery, track their progress and ap
 everything from a console with reviews, escalations and path control. Every AI response is grounded in approved sources,
 answer keys are protected, and all decisions are audited.
 
-The user stories, how each was built and where it lives are listed in **[USER_STORIES.md](USER_STORIES.md)**.
+## Formative quizzes and the AI teacher debrief
+
+- **10-question formative quizzes** drawn only from the teacher-approved item bank: multiple choice plus 3–5 written
+  questions (true/false, fill in the blank, short answer). Every question counts, and answer keys stay encrypted.
+- **Marks are shown only after the quiz is submitted.** Formative quizzes give no hints, so the score shows what the
+  student really knows.
+- **Teacher debrief:** after submitting, an AI teacher goes through each wrong answer. It asks what the student was
+  thinking, works out why the answer was wrong (concept gap, misreading, careless slip or partly right), explains the
+  idea again and asks one short check question. What it learns feeds into **reteaching**, so the next explanation
+  starts from the student's actual misunderstanding.
+- **Practice** gives Socratic hints and one practice set per lecture. Both tutors (the topic tutor and the docked
+  *Ask the tutor* rail) nudge the student towards the answer instead of giving it away.
 
 ## Tech stack
 
@@ -38,7 +49,8 @@ AI-Tutor/
 │  │  ├─ models/           database tables (one file per domain)
 │  │  ├─ routers/          REST endpoints (one file per feature)
 │  │  └─ services/         AI gateway, Gemini client, extraction, parsing, retrieval, mastery,
-│  │                       criteria, diagnostic, paths, adaptation, reteach, escalation, items
+│  │                       criteria, diagnostic, paths, adaptation, reteach, escalation, items,
+│  │                       quiz marking (written answers), practice
 │  ├─ tests/               pytest suite (one file per user story) + live Gemini tests
 │  ├─ sample_data/         sample curriculum (MD/PDF/DOCX), lecture notes, CS101 question bank
 │  ├─ e2e_smoke.py         end-to-end check against the running app
@@ -51,8 +63,6 @@ AI-Tutor/
 │  │  ├─ pages/admin/  pages/staff/  pages/student/  pages/auth/
 │  │  └─ test/                                     Vitest tests
 │  └─ vite.config.ts                              HTTPS dev server + /api proxy
-├─ docs/BACKLOG.md          supervisor backlog
-├─ USER_STORIES.md          implementation report
 ├─ setup.ps1, start-backend.ps1, start-frontend.ps1
 └─ .gitignore
 ```
@@ -99,7 +109,7 @@ Open **https://localhost:5173** and accept the self-signed certificate once. Dem
 | Instructor | sara.instructor@university.edu | Console (CS101/CS201), review queue, item bank, content, Bilal's escalation, Ayesha's appeal |
 | Instructor | omar.instructor@university.edu | MATH110 — activation blocked until mappings are approved |
 | Exam staff | exams@university.edu | Read-only audit log and AI traces |
-| Student | ayesha.student@university.edu | Learning path, units, quizzes with hints, progress PDF, appeals |
+| Student | ayesha.student@university.edu | Learning path, units, practice with hints, formative quiz + teacher debrief, progress PDF, appeals |
 | Student | bilal.student@university.edu | Struggling learner (escalated); CS201 blocked by prerequisite |
 | Student | chen.student@university.edu | New learner: take the diagnostic |
 
@@ -119,7 +129,7 @@ Useful commands (from `backend`, with `.venv\Scripts\python.exe`):
 
 ```powershell
 cd backend
-.venv\Scripts\python.exe -m pytest              # 214 tests, one file per user story (offline, no network)
+.venv\Scripts\python.exe -m pytest              # 342 tests, one file per user story (offline, no network)
 .venv\Scripts\python.exe -m pytest -m live      # real Gemini calls (needs a working GEMINI_API_KEY)
 
 cd ..\frontend
@@ -135,5 +145,6 @@ cd ..\backend
 
 - Gemini is verified live (`pytest -m live` passes). Temporary Google errors (503 overloaded, 429 rate limit) are retried with
   backoff and then sent to backup models (`GEMINI_FALLBACK_MODELS`); if every model fails, the app uses its labelled offline
-  mode. Without a key it runs fully offline. See *Known limitations* in USER_STORIES.md.
+  mode. Without a key it runs fully offline; the quiz debrief then still walks through every wrong answer using the
+  stored explanation of the right answer.
 - Keep the project outside OneDrive or pause sync while developing: syncing `node_modules` and `.venv` is slow.
