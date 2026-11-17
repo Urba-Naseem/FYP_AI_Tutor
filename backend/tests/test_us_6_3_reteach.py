@@ -5,7 +5,7 @@ from .helpers import right, wrong
 from .helpers import add_approved_source, make_items, published_diagnostic, take_diagnostic, take_quiz
 
 
-def ctx(client, items=15, source=True):
+def ctx(client, items=20, source=True):
     c = published_diagnostic(client)
     if source:
         add_approved_source(client, c["ih"], c["ih"], c["course"]["id"])
@@ -83,7 +83,7 @@ def reteach_step_status(client, c):
 
 
 def test_attempt_limit_then_advance_with_flag(client):
-    c = ctx(client, items=20)
+    c = ctx(client, items=25)
     rules = [reteach_quiz(client, c, 0)[1]["adaptation"]["rule"] for _ in range(3)]
     assert rules == ["R-RETRY", "R-RETRY", "R-EXHAUSTED"]
     p = client.get(f"/api/paths/me/{c['cid']}", headers=c["sh"]).json()
@@ -95,6 +95,6 @@ def test_attempt_limit_then_advance_with_flag(client):
 
 
 def test_not_enough_new_questions(client):
-    c = ctx(client, items=6)  # 5 used by the practice quiz -> only 1 unseen left
+    c = ctx(client, items=11)  # 10 used by the practice quiz -> only 1 unseen left
     cyc = client.get(f"/api/reteach/{c['cid']}/clo/{c['clo']['id']}", headers=c["sh"]).json()
     assert client.post(f"/api/reteach/cycles/{cyc['id']}/quiz", headers=c["sh"], json={}).status_code == 409

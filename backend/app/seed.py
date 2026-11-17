@@ -197,9 +197,24 @@ def run():
             _db.commit()
             _db.close()
             q = _ok(c.post("/api/quiz/start", headers=h, json={"course_id": cs101["id"], "clo_id": clo_by_code[code]["id"]}), "quiz start")
+            # n_correct is "out of 5" (the demo story); quizzes now have 10+ questions, so scale it to the quiz length
+            right_n = round(n_correct * len(q["questions"]) / 5)
             for i, qq in enumerate(q["questions"]):
-                _ok(c.post(f"/api/quiz/attempts/{q['id']}/answer", headers=h,
-                           json={"item_id": qq["id"], "choice": shown_answer(qq, i < n_correct)}), "quiz answer")
+                good = i < right_n
+                if qq.get("type", "mcq") == "mcq":
+                    body = {"item_id": qq["id"], "choice": shown_answer(qq, good)}
+                else:  # written questions from the approved bank: answer from the key (or a wrong answer)
+                    from .models.items import Item
+
+                    _db = SessionLocal()
+                    it = _db.get(Item, qq["id"])
+                    if it.kind == "true_false":
+                        text = ("true" if it.answer == 0 else "false") if good else ("false" if it.answer == 0 else "true")
+                    else:
+                        text = it.key.get("answer", "") if good else "I am not sure"
+                    _db.close()
+                    body = {"item_id": qq["id"], "text": text}
+                _ok(c.post(f"/api/quiz/attempts/{q['id']}/answer", headers=h, json=body), "quiz answer")
             return _ok(c.post(f"/api/quiz/attempts/{q['id']}/finish", headers=h), "quiz finish")
 
         # Ayesha: strong learner, attained CLO1 and CLO3, appeals one quiz on CLO2

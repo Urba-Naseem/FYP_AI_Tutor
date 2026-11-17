@@ -33,6 +33,7 @@ ROUTER_MODULES = [
     "learn",
     "quiz",
     "hints",
+    "debrief",
     "reteach",
     "console",
     "escalations",

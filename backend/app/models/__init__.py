@@ -17,7 +17,7 @@ from .mastery import MasteryEvidence, MasteryRecord  # noqa: F401
 from .offerings import InstructorAssignment, Section, Term  # noqa: F401
 from .outcomes import CLO, PLO, Course, Program, ReviewAck, Unit  # noqa: F401
 from .paths import LearningPath, PathDecision, PathStep  # noqa: F401
-from .quiz import QuizAnswer, QuizAttempt  # noqa: F401
+from .quiz import QuizAnswer, QuizAttempt, QuizDebrief  # noqa: F401
 from .reteach import ReteachCycle  # noqa: F401
 from .sources import Source, SourceChunk  # noqa: F401
 from .topics import PracticeSet, StudentNote, Topic  # noqa: F401

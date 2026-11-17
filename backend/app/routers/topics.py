@@ -117,6 +117,18 @@ def new_practice(course_id: int, clo_id: int, body: PracticeIn, db: Session = De
     return practice.out(ps)
 
 
+@router.get("/practice/{course_id}/clos/{clo_id}/latest")
+def latest_practice(course_id: int, clo_id: int, topic_id: int | None = None, db: Session = Depends(get_db),
+                    user: User = Depends(require("learn"))):
+    """The student's latest practice set for this topic (each lecture keeps its own), or null."""
+    _course(db, user, course_id)
+    clo = db.get(CLO, clo_id)
+    if not clo or clo.course_id != course_id:
+        raise HTTPException(404, "Outcome not found")
+    ps = practice.latest(db, user.id, clo_id, topic_id)
+    return practice.out(ps) if ps else None
+
+
 def _own_set(db: Session, user: User, sid: int) -> PracticeSet:
     ps = db.get(PracticeSet, sid)
     if not ps or ps.student_id != user.id:

@@ -34,7 +34,8 @@ DIAGNOSTIC_EXTRA = 1  # generate a little above the minimum so the adaptive diag
 # Personal question sets need a bank with real choice at every difficulty: the diagnostic picks a different question
 # of the same difficulty for each student, and quizzes never repeat a question for the same student.
 DIAGNOSTIC_PER_LEVEL = 2   # x 3 difficulty levels per CLO
-FORMATIVE_PER_CLO = 9
+FORMATIVE_PER_CLO = 12  # multiple-choice formative questions (a quiz asks 5-7 of them)
+WRITTEN_PER_CLO = 9     # formative true/false, fill in the blank and short answer (a quiz asks 3-5 of them)
 RETEACH_PER_CLO = 6
 TOP_UP = 10                # extra questions drafted when a student is running out of unseen ones
 TOP_UP_CAP = 40
@@ -244,7 +245,7 @@ def prepare_course(db: Session, course_id: int, user_id: int | None) -> dict:
         return {"published": False, "problems": ["Course is not approved"]}
     cfg = r.get_config(db, course_id)
     targets = {"diagnostic": max(cfg.min_items_per_clo + DIAGNOSTIC_EXTRA, 3 * DIAGNOSTIC_PER_LEVEL),
-               "formative": FORMATIVE_PER_CLO, "reteach": RETEACH_PER_CLO}
+               "formative": FORMATIVE_PER_CLO, "reteach": RETEACH_PER_CLO, "written": WRITTEN_PER_CLO}
     db.commit()  # release the write lock before the first (slow) AI call
     from . import ai_gateway, course_context
 
@@ -254,8 +255,12 @@ def prepare_course(db: Session, course_id: int, user_id: int | None) -> dict:
     def missing(clo) -> dict[str, int]:
         need = {}
         for purpose, target in targets.items():
-            have = db.scalar(select(func.count(Item.id)).where(Item.clo_id == clo.id, Item.purpose == purpose,
-                                                               Item.status.in_(["approved", "pending"]))) or 0
+            q = select(func.count(Item.id)).where(Item.clo_id == clo.id, Item.status.in_(["approved", "pending"]))
+            if purpose == "written":  # written questions are formative items with a written type
+                q = q.where(Item.purpose == "formative", Item.qtype.is_not(None), Item.qtype != "mcq")
+            else:
+                q = q.where(Item.purpose == purpose, (Item.qtype.is_(None)) | (Item.qtype == "mcq"))
+            have = db.scalar(q) or 0
             need[purpose] = max(0, target + _extra.get((clo.id, purpose), 0) - have)
         return need
 
@@ -263,7 +268,7 @@ def prepare_course(db: Session, course_id: int, user_id: int | None) -> dict:
         nonlocal created
         for data in items:
             try:
-                r._new_item(db, user, course, clo, purpose, data, origin, call_id)
+                r._new_item(db, user, course, clo, "formative" if purpose == "written" else purpose, data, origin, call_id)
                 created += 1
             except HTTPException:
                 pass  # an invalid item is skipped; the next run tops up
@@ -287,7 +292,10 @@ def prepare_course(db: Session, course_id: int, user_id: int | None) -> dict:
             if n <= 0:
                 continue
             try:
-                items, origin, call_id = gen.generate_for_clo(db, user, course, clo, n, purpose)
+                if purpose == "written":
+                    items, origin, call_id = gen.generate_written_for_clo(db, user, course, clo, n)
+                else:
+                    items, origin, call_id = gen.generate_for_clo(db, user, course, clo, n, purpose)
             except ValueError as e:
                 problems.append(str(e))
                 db.commit()  # keep the AI trace; never carry an open write transaction into the next AI call

@@ -16,9 +16,29 @@ from ..services import ai_gateway, llm
 router = APIRouter(prefix="/api", tags=["ai"])
 
 
+class PastTurn(BaseModel):
+    question: str
+    answer: str
+
+
 class AskIn(BaseModel):
     course_id: int
     question: str
+    history: list[PastTurn] = []  # earlier turns of this conversation (for Socratic follow-ups)
+
+
+SOCRATIC_NUDGE = (
+    "TEACHING STYLE - SOCRATIC NUDGING (the learner is a student studying this course):\n"
+    "- For a NEW conceptual question where the learner has not shown their own thinking yet, do NOT give the full "
+    "answer. Reply briefly: acknowledge the question, give a nudge (a related idea they already know, or where in the "
+    "outcome / reading to look) and end with ONE guiding question that moves them one step closer.\n"
+    "- When the learner replies to your guiding question, build on what they said: confirm what is right, correct "
+    "gently, and nudge further.\n"
+    "- Give a complete, clear explanation only when they have reasoned it through, after two real attempts, or when "
+    "they say they are stuck or ask you to explain it; then end with one quick check question.\n"
+    "- Simple factual look-ups (a definition, where something is covered) may be answered directly.\n"
+    "Keep replies under about 120 words.\n"
+)
 
 
 class FlagIn(BaseModel):
@@ -51,7 +71,11 @@ def ask(body: AskIn, db: Session = Depends(get_db), user: User = Depends(require
         protected = protected_answers(db, body.course_id)
     except ImportError:
         pass
-    res = ai_gateway.grounded_answer(db, user, body.course_id, body.question, protected=protected)
+    extra = ""
+    if user.role == "student":
+        past = "\n".join(f"LEARNER: {ai_gateway.fence(t.question[:700])}\nTUTOR: {t.answer[:700]}" for t in body.history[-4:])
+        extra = SOCRATIC_NUDGE + (f"\nCONVERSATION SO FAR:\n{past}\n" if past else "")
+    res = ai_gateway.grounded_answer(db, user, body.course_id, body.question, protected=protected, extra_instructions=extra)
     db.commit()
     return res
 

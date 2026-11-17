@@ -25,11 +25,15 @@ class ItemsOut(BaseModel):
     items: list[ItemOut]
 
 
+from .quiz_written import WrittenItemOut  # noqa: E402
+
+
 class ItemBundleOut(BaseModel):
     """All question types for one CLO in a single call (optimisation 1: fewer calls)."""
     diagnostic: list[ItemOut] = Field(default_factory=list)
     formative: list[ItemOut] = Field(default_factory=list)
     reteach: list[ItemOut] = Field(default_factory=list)
+    written: list["WrittenItemOut"] = Field(default_factory=list)  # formative true/false, fill in the blank, short answer
 
 
 # ---- CLO-PLO mappings --------------------------------------------------------------------------------
@@ -158,6 +162,7 @@ class PracticeQuestion(BaseModel):
     options: list[str] = Field(description="Exactly 4 answer options.")
     answer_index: int = Field(description="Index (0-3) of the correct option.")
     explanation: str = Field(description="Why the correct option is right and the others are wrong.")
+    hints: list[str] = Field(default_factory=list, description="2 Socratic hints that never reveal the answer.")
 
 
 class PracticeOut(BaseModel):

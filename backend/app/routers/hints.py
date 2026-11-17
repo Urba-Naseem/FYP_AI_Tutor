@@ -1,6 +1,6 @@
 """US-6.2 - Guided hints: progressive Socratic support, static fallback, answer protection.
 
-* Up to 3 levels per question, each more specific than the last.
+* Reteach quizzes only (formative quizzes have no hints). Up to 3 levels per question, each more specific than the last.
 * Gemini writes Socratic hints from the outcome and question (approved teaching sources are added when they match). The model is never
   given the answer key, and every hint is also checked by the answer-protection
   guard against the correct option; a leaking hint is replaced by a static one.
@@ -60,6 +60,8 @@ def hint(aid: int, body: HintIn, db: Session = Depends(get_db), user: User = Dep
     a = db.get(QuizAttempt, aid)
     if not a or a.student_id != user.id:
         raise HTTPException(404, "Quiz not found")
+    if a.kind == "formative":
+        raise HTTPException(409, "Formative quizzes have no hints - show what you know, then talk it through with your tutor afterwards")
     if a.status != "in_progress" or body.item_id not in a.item_ids:
         raise HTTPException(409, "Hints are only available for open questions")
     if db.scalar(select(QuizAnswer).where(QuizAnswer.attempt_id == a.id, QuizAnswer.item_id == body.item_id)):
@@ -71,14 +73,14 @@ def hint(aid: int, body: HintIn, db: Session = Depends(get_db), user: User = Dep
     level = len(prev) + 1
     it = db.get(Item, body.item_id)
     clo = db.get(CLO, it.clo_id)
-    protected = [it.options[it.answer]]
+    protected = [it.key_text] if it.kind != "true_false" else []
     # Hints are written from the outcome and the question; approved teaching sources are added when they match.
     hits = retrieval.search(db, a.course_id, f"{clo.description} {it.stem}", k=3)
     mode, call_id = "static", None
     text = static_hint(it, clo, level)
     sources = f"SOURCES:\n{ai_gateway.format_sources(hits)}\n\n" if hits else ""
     prompt = (f"{sources}OUTCOME {clo.code}: {clo.description}" + (f" (Bloom level: {clo.bloom})" if clo.bloom else "") +
-              f"\nQUESTION:\n{ai_gateway.fence(it.stem)}\nOPTIONS: " + " | ".join(it.options) +
+              f"\nQUESTION:\n{ai_gateway.fence(it.stem)}\n" + (f"OPTIONS: {' | '.join(it.options)}" if it.options else f"TYPE: {it.kind}") +
               "\nHINTS ALREADY GIVEN: " + (" / ".join(h.text for h in prev) or "none") + f"\n{LEVEL_GUIDE[level]}")
     try:
         out = ai_gateway.call_text(db, user, f"hint.level{level}", prompt, HINT_SYSTEM, temperature=0.5,

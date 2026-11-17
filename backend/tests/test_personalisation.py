@@ -44,30 +44,30 @@ def finish(client, sh, q, right=0):
 
 def test_two_students_get_different_question_sets(client):
     c = active_course_with_student(client)
-    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=15)
+    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=30)
     clo = c["course"]["clos"][0]
     _, sh2 = second_student(client, c)
     a = {x["id"] for x in start(client, c["sh"], c, clo)["questions"]}
     b = {x["id"] for x in start(client, sh2, c, clo)["questions"]}
-    assert len(a) == len(b) == 5 and a != b
+    assert len(a) == len(b) == 10 and a != b
 
 
 def test_a_student_never_repeats_a_question_while_unseen_ones_remain(client):
     c = active_course_with_student(client)
-    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=12)
+    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=24)
     clo = c["course"]["clos"][0]
     seen = set()
     for _ in range(2):
         q = start(client, c["sh"], c, clo)
         ids = {x["id"] for x in q["questions"]}
-        assert not ids & seen  # 10 of 12 used, no repeats
+        assert not ids & seen  # 20 of 24 used, no repeats
         seen |= ids
         finish(client, c["sh"], q)
 
 
 def test_difficulty_follows_the_students_level(client):
     c = active_course_with_student(client)
-    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=15)  # 5 easy, 5 medium, 5 hard
+    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=30)  # 10 easy, 10 medium, 10 hard
     clo = c["course"]["clos"][0]
     q = finish(client, c["sh"], start(client, c["sh"], c, clo), right=0)  # 0% -> mastery 0
     assert q["mastery"]["mastery_pct"] == 0
@@ -75,7 +75,7 @@ def test_difficulty_follows_the_students_level(client):
     db = SessionLocal()
     diffs = [db.get(Item, x["id"]).difficulty for x in nxt["questions"]]
     db.close()
-    assert diffs.count(1) >= 3 and 3 not in diffs, diffs  # a struggling student: mostly easy, never hard
+    assert diffs.count(1) >= 6 and 3 not in diffs, diffs  # a struggling student: mostly easy, never hard
 
 
 def test_diagnostic_same_difficulty_different_questions(client):
@@ -97,11 +97,11 @@ def test_diagnostic_same_difficulty_different_questions(client):
 
 def test_past_quizzes_show_answers_to_their_owner_only(client):
     c = active_course_with_student(client)
-    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=6)
+    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=10)
     clo = c["course"]["clos"][0]
     q = finish(client, c["sh"], start(client, c["sh"], c, clo), right=3)
     hist = client.get(f"/api/quiz/history/{c['course']['id']}", headers=c["sh"]).json()
-    assert len(hist) == 1 and hist[0]["correct"] == 3 and hist[0]["total"] == 5
+    assert len(hist) == 1 and hist[0]["correct"] == 3 and hist[0]["total"] == 10
     review = client.get(f"/api/quiz/attempts/{q['id']}", headers=c["sh"]).json()
     assert all("answer" in x and "correct_index" in x["answer"] and "explanation" in x["answer"] for x in review["questions"])
     _, sh2 = second_student(client, c)

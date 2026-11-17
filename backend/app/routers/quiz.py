@@ -1,4 +1,14 @@
-"""US-6.1 - Deliver formative quizzes with immediate feedback and update CLO mastery."""
+"""US-6.1 - Deliver formative quizzes and update CLO mastery.
+
+* A formative quiz has QUIZ_SIZE (10) questions, ALL from the teacher-approved bank and ALL counted in the score:
+  3-5 written questions (true/false, fill in the blank, short answer - services/quiz_written.py) and multiple choice
+  for the rest. The AI only drafts questions; a teacher approves every one before a student can see it. When the bank
+  has too few written questions the quiz uses more multiple choice (and the other way round).
+* Answers are saved as the student goes and may be changed until the quiz is submitted. Nothing is marked or revealed
+  before submission; the full result (score, every answer, the right answers and why) is shown at the end, followed by
+  the teacher debrief about the wrong answers (routers/debrief.py).
+* Formative quizzes have no hints (hints stay in reteach quizzes and practice).
+"""
 import random
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -20,7 +30,9 @@ from ..services import shuffle
 from .registration import require_consent
 
 router = APIRouter(prefix="/api/quiz", tags=["quiz"])
-QUIZ_SIZE = 5
+QUIZ_SIZE = 10            # formative quiz length (every question counts)
+RETEACH_SIZE = 5          # reteach quizzes stay short
+WRITTEN_RANGE = (3, 5)    # written questions per formative quiz, when the bank has them
 MIN_ITEMS = 3
 
 
@@ -33,7 +45,12 @@ class StartIn(BaseModel):
 
 class AnswerIn(BaseModel):
     item_id: int
-    choice: int
+    choice: int | None = None  # multiple choice: the option index as shown
+    text: str | None = None    # written questions: the student's answer (true_false: "true" / "false")
+
+
+def _is_written(it: Item) -> bool:
+    return it.kind != "mcq"
 
 
 def _seen_counts(db: Session, student_id: int, clo_id: int) -> dict[int, int]:
@@ -60,7 +77,8 @@ def target_difficulty(db: Session, student_id: int, course_id: int | None, clo_i
 
 
 def pick_items(db: Session, student_id: int, clo_id: int, purposes: tuple[str, ...], size: int = QUIZ_SIZE,
-               unseen_only: bool = False, course_id: int | None = None, kind: str = "formative") -> list[Item]:
+               unseen_only: bool = False, course_id: int | None = None, kind: str = "formative",
+               written: bool | None = None) -> list[Item]:
     """A personal question set from the teacher-approved bank:
       1. never a question this student has already seen while unseen ones remain,
       2. difficulty matched to the student's own level (diagnostic, then mastery),
@@ -69,6 +87,8 @@ def pick_items(db: Session, student_id: int, clo_id: int, purposes: tuple[str, .
     import random
 
     pool = db.scalars(select(Item).where(Item.clo_id == clo_id, Item.purpose.in_(purposes), Item.status == "approved")).all()
+    if written is not None:  # only written questions, or only multiple choice
+        pool = [i for i in pool if _is_written(i) == written]
     seen = _seen_counts(db, student_id, clo_id)
     unseen = [i for i in pool if i.id not in seen]
     if unseen_only:
@@ -103,22 +123,46 @@ def _attempt(db: Session, aid: int, user: User) -> QuizAttempt:
     return a
 
 
+def _tf(chosen: int | None) -> str:
+    return "" if chosen is None or chosen < 0 else ("True" if chosen == 0 else "False")
+
+
 def attempt_out(db: Session, a: QuizAttempt) -> dict:
     answers = {x.item_id: x for x in db.scalars(select(QuizAnswer).where(QuizAnswer.attempt_id == a.id))}
+    done = a.status == "completed"
     qs = []
     for pos, iid in enumerate(a.item_ids):
         it = db.get(Item, iid)
-        p = shuffle.order(shuffle.quiz_key(a.id), pos, len(it.options), it.answer)  # this attempt's balanced option order
-        q = {"id": it.id, "stem": it.stem, "options": shuffle.shown(it.options, p), "hints_available": True}
+        t = it.kind
         ans = answers.get(iid)
-        if ans:  # feedback is only revealed once the learner has answered (indices in the order the student saw)
-            q["answer"] = {"chosen": shuffle.to_shown(p, ans.chosen), "correct": ans.correct, "correct_index": shuffle.to_shown(p, it.answer),
-                           "explanation": it.explanation, "hints_used": ans.hints_used}
+        q = {"id": it.id, "type": t, "stem": it.stem, "hints_available": a.kind == "reteach"}
+        if t == "mcq":
+            p = shuffle.order(shuffle.quiz_key(a.id), pos, len(it.options), it.answer)  # this attempt's balanced option order
+            q["options"] = shuffle.shown(it.options, p)
+            if ans:
+                q["response"] = {"choice": shuffle.to_shown(p, ans.chosen)}  # the saved choice (not marked yet)
+                if done:  # marks, right answers and explanations only once the quiz is submitted
+                    q["answer"] = {"chosen": shuffle.to_shown(p, ans.chosen), "correct": ans.correct,
+                                   "correct_index": shuffle.to_shown(p, it.answer), "explanation": it.explanation,
+                                   "hints_used": ans.hints_used}
+        else:
+            q["options"] = ["True", "False"] if t == "true_false" else []
+            if ans:
+                said = _tf(ans.chosen) if t == "true_false" else (ans.response_text or "")
+                q["response"] = {"text": said.lower() if t == "true_false" else said}
+                if done:
+                    k = it.key
+                    q["answer"] = {"text": said, "correct": ans.correct, "explanation": it.explanation,
+                                   "model_answer": _tf(it.answer) if t == "true_false" else k.get("answer", ""),
+                                   "feedback": ans.feedback or "", "key_points": k.get("key_points", []),
+                                   "hints_used": ans.hints_used}
         qs.append(q)
     clo = db.get(CLO, a.clo_id)
     out = {"id": a.id, "course_id": a.course_id, "clo_id": a.clo_id, "clo_code": clo.code, "clo_description": clo.description,
            "kind": a.kind, "status": a.status, "step_id": a.step_id, "questions": qs,
            "answered": len(answers), "total": len(a.item_ids), "score_pct": a.score_pct}
+    if done:
+        out["correct"] = sum(1 for x in answers.values() if x.correct)
     if a.mastery_record_id:
         rec = db.get(MasteryRecord, a.mastery_record_id)
         out["mastery"] = {"mastery_pct": rec.mastery_pct, "attained": rec.attained, "threshold": rec.threshold,
@@ -133,7 +177,19 @@ def start_attempt(db: Session, user: User, course_id: int, clo_id: int, kind: st
                                                    QuizAttempt.status == "in_progress"))
     if existing:
         return existing
-    items = pick_items(db, user.id, clo_id, purposes, unseen_only=unseen_only, course_id=course_id, kind=kind)
+    if kind == "formative":
+        # 3-5 approved written questions (the number varies per attempt), multiple choice for the rest; if either kind
+        # runs short, the other fills the quiz up to QUIZ_SIZE
+        attempts = db.scalar(select(func.count(QuizAttempt.id)).where(QuizAttempt.student_id == user.id, QuizAttempt.clo_id == clo_id)) or 0
+        want = random.Random(f"written:{user.id}:{clo_id}:{attempts}").randint(*WRITTEN_RANGE)
+        written = pick_items(db, user.id, clo_id, purposes, size=QUIZ_SIZE, unseen_only=unseen_only, course_id=course_id,
+                             kind=kind, written=True)
+        mcq = pick_items(db, user.id, clo_id, purposes, size=QUIZ_SIZE, unseen_only=unseen_only, course_id=course_id,
+                         kind=kind, written=False)
+        take_w = min(len(written), max(want, QUIZ_SIZE - len(mcq)))
+        items = written[:take_w] + mcq[:QUIZ_SIZE - take_w]
+    else:
+        items = pick_items(db, user.id, clo_id, purposes, size=RETEACH_SIZE, unseen_only=unseen_only, course_id=course_id, kind=kind)
     if len(items) < MIN_ITEMS:
         raise HTTPException(409, "Not enough approved questions for this outcome yet - please ask your instructor to add more")
     ids = [i.id for i in items]
@@ -141,7 +197,8 @@ def start_attempt(db: Session, user: User, course_id: int, clo_id: int, kind: st
     a = QuizAttempt(student_id=user.id, course_id=course_id, clo_id=clo_id, kind=kind, step_id=step_id, item_ids=ids)
     db.add(a)
     db.flush()
-    learning(db, user, f"{kind}_started", "quiz_attempt", a.id, {"clo_id": clo_id, "items": a.item_ids}, course_id=course_id)
+    learning(db, user, f"{kind}_started", "quiz_attempt", a.id,
+             {"clo_id": clo_id, "items": a.item_ids, "written": sum(1 for i in items if _is_written(i))}, course_id=course_id)
     return a
 
 
@@ -189,38 +246,67 @@ def get_attempt(aid: int, db: Session = Depends(get_db), user: User = Depends(re
 
 @router.post("/attempts/{aid}/answer")
 def answer(aid: int, body: AnswerIn, db: Session = Depends(get_db), user: User = Depends(require("learn"))):
-    """Record an answer and return immediate feedback."""
+    """Save (or change) the answer to one question. Nothing is marked or revealed until the quiz is submitted."""
     a = _attempt(db, aid, user)
     if a.status != "in_progress":
         raise HTTPException(409, "This quiz is finished")
     if body.item_id not in a.item_ids:
         raise HTTPException(404, "Question not in this quiz")
-    if db.scalar(select(QuizAnswer).where(QuizAnswer.attempt_id == a.id, QuizAnswer.item_id == body.item_id)):
-        raise HTTPException(409, "Already answered")
     it = db.get(Item, body.item_id)
-    if not 0 <= body.choice < len(it.options):
-        raise HTTPException(422, "Invalid option")
+    t = it.kind
+    text = None
+    if t == "mcq":
+        if body.choice is None or not 0 <= body.choice < len(it.options):
+            raise HTTPException(422, "Invalid option")
+        p = shuffle.order(shuffle.quiz_key(a.id), a.item_ids.index(it.id), len(it.options), it.answer)
+        chosen = shuffle.to_original(p, body.choice)  # the student answers in the shuffled order they see
+        correct = chosen == it.answer
+    elif t == "true_false":
+        said = (body.text or "").strip().lower()
+        if said not in ("true", "false"):
+            raise HTTPException(422, "Choose True or False")
+        chosen = 0 if said == "true" else 1
+        correct = chosen == it.answer
+    else:
+        text = (body.text or "").strip()[:2000]
+        if not text:
+            raise HTTPException(422, "Type an answer first")
+        from ..services import quiz_written
+
+        chosen = -1
+        # fill in the blank is checked now; a short answer is marked when the quiz is submitted
+        correct = quiz_written.fill_correct(it.key, text) if t == "fill_blank" else False
     hints = 0
-    try:  # US-6.2: hints requested for this question
+    try:  # US-6.2: hints requested for this question (reteach quizzes)
         from ..models.hints import HintRequest
 
         hints = len(db.scalars(select(HintRequest).where(HintRequest.attempt_id == a.id, HintRequest.item_id == it.id)).all())
     except ImportError:
         pass
-    p = shuffle.order(shuffle.quiz_key(a.id), a.item_ids.index(it.id), len(it.options), it.answer)
-    chosen = shuffle.to_original(p, body.choice)  # the student answers in the shuffled order they see
-    correct = chosen == it.answer
-    db.add(QuizAnswer(attempt_id=a.id, item_id=it.id, item_version=it.version_no, chosen=chosen, correct=correct, hints_used=hints))
-    learning(db, user, f"{a.kind}_answer", "item", it.id, {"attempt": a.id, "correct": correct, "hints_used": hints}, course_id=a.course_id)
+    prev = db.scalar(select(QuizAnswer).where(QuizAnswer.attempt_id == a.id, QuizAnswer.item_id == body.item_id))
+    if prev:  # changed their mind before submitting
+        prev.chosen, prev.correct, prev.hints_used, prev.response_text, prev.answered_at = chosen, correct, hints, text, utcnow()
+    else:
+        db.add(QuizAnswer(attempt_id=a.id, item_id=it.id, item_version=it.version_no, chosen=chosen, correct=correct,
+                          hints_used=hints, response_text=text))
+    learning(db, user, f"{a.kind}_answer", "item", it.id, {"attempt": a.id, "hints_used": hints, "changed": bool(prev)}, course_id=a.course_id)
     db.commit()
-    return {"correct": correct, "correct_index": shuffle.to_shown(p, it.answer), "explanation": it.explanation,
-            "feedback": "Correct - well done!" if correct else "Not quite. Read the explanation, then carry on."}
+    n = db.scalar(select(func.count(QuizAnswer.id)).where(QuizAnswer.attempt_id == a.id)) or 0
+    return {"saved": True, "answered": n, "total": len(a.item_ids)}
 
 
 def finish_attempt(db: Session, user: User, a: QuizAttempt) -> QuizAttempt:
     answers = db.scalars(select(QuizAnswer).where(QuizAnswer.attempt_id == a.id)).all()
     if len(answers) < len(a.item_ids):
         raise HTTPException(409, f"Answer all {len(a.item_ids)} questions first")
+    short = [(x, db.get(Item, x.item_id)) for x in answers]
+    short = [(x, it) for x, it in short if it.kind == "short_answer"]
+    if short:  # short written answers are marked by the AI (offline: by their key points), all in one call
+        from ..services import quiz_written
+
+        marks = quiz_written.mark_short_answers(db, user, a.course_id, [(it.stem, it.key, x.response_text or "") for x, it in short])
+        for (x, _), (ok, fb) in zip(short, marks):
+            x.correct, x.feedback = ok, fb
     items = [{"item_id": x.item_id, "item_version": x.item_version, "correct": x.correct, "hints_used": x.hints_used} for x in answers]
     ev, rec = mastery.add_evidence(db, user, a.clo_id, "reteach" if a.kind == "reteach" else "quiz", f"quiz_attempt:{a.id}", items)
     a.status, a.completed_at, a.score_pct = "completed", utcnow(), ev.score_pct

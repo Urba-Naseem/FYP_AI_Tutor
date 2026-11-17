@@ -1,6 +1,10 @@
 """In-lesson Socratic tutor (topic pages) and the student's saved notes / flashcards.
 
-POST /api/tutor/{course}/topics/{topic}   mode = explain | check | answer
+POST /api/tutor/{course}/topics/{topic}   mode = ask | explain | check | answer | hint | reveal
+    ask      a question the student typed: SOCRATIC NUDGING - no straight answer at first; a nudge (what they already
+             know / which section to look at) and ONE guiding question, then build on the student's reasoning step by
+             step; a full explanation only once they have reasoned it through, made two real attempts or say they
+             are stuck
     explain  explain the highlighted text (or a question) simply, with a brief prerequisite recap when needed,
              citing the exact lesson section; ends with one guiding question
     check    ask ONE Socratic question about the lesson (never the answer)
@@ -36,6 +40,19 @@ SYSTEM = (
     "questions. RULES: never give a full answer immediately - ask a guiding question and offer a hint first; always "
     "cite the exact lesson section(s) you used by their numbers; keep replies brief and scannable (short paragraphs "
     "or bullets, at most about 150 words); stay inside the lesson and course. Use Markdown, LaTeX in $...$, fenced code."
+)
+
+
+SOCRATIC_TASK = (
+    "Use SOCRATIC NUDGING. Look at the conversation so far.\n"
+    "- If this is a NEW question and the student has not shown their own thinking on it yet: do NOT answer it. Reply "
+    "with one friendly line, a nudge (an idea they already know, or which section to look at) and ONE guiding question "
+    "that moves them one step towards the answer. Put that question in `question` too.\n"
+    "- If the student is replying to your guiding question: say what is right in their reasoning, gently correct what "
+    "is not, and nudge one step further with another question.\n"
+    "- Give a concise complete explanation (with the section) only when they have reached the idea, have made two real "
+    "attempts, or say they are stuck / ask you to explain - then end with one quick check question.\n"
+    "- Refer to sections by their title in the text (never write '[SECTION n]'); put their numbers in cited_sections.\n"
 )
 
 
@@ -103,12 +120,14 @@ def _best_section(secs: list[dict], text: str) -> dict | None:
 
 @router.post("/{course_id}/topics/{topic_id}")
 def ask(course_id: int, topic_id: int, body: AskIn, db: Session = Depends(get_db), user: User = Depends(require("learn"))):
-    if body.mode not in ("explain", "check", "answer", "hint", "reveal"):
-        raise HTTPException(422, "mode must be explain, check, answer, hint or reveal")
+    if body.mode not in ("ask", "explain", "check", "answer", "hint", "reveal"):
+        raise HTTPException(422, "mode must be ask, explain, check, answer, hint or reveal")
     if body.mode == "reveal" and not any(h.role == "student" and h.text.startswith("Answer:") for h in body.history):
         raise HTTPException(409, "Try an answer first - the answer is revealed only after an attempt")
     if body.mode == "explain" and not (body.selection or body.message or "").strip():
         raise HTTPException(422, "Highlight some text in the lesson or type a question")
+    if body.mode == "ask" and not (body.message or "").strip():
+        raise HTTPException(422, "Type a question first")
     if body.mode == "answer" and not (body.message or "").strip():
         raise HTTPException(422, "Type your answer first")
     t, secs = _lesson(db, user, course_id, topic_id)
@@ -116,6 +135,9 @@ def ask(course_id: int, topic_id: int, body: AskIn, db: Session = Depends(get_db
     lesson = "\n\n".join(f"[SECTION {s['n']}: {s['title']}]\n{s['text'][:2500]}" for s in secs)
     history = "\n".join(f"{h.role.upper()}: {h.text[:600]}" for h in body.history[-8:])
     task = {
+        "ask": f"The student wrote: \"\"\"{(body.message or '')[:800]}\"\"\"\n"
+               + (f"(About this highlighted part: \"\"\"{body.selection[:600]}\"\"\")\n" if body.selection else "")
+               + SOCRATIC_TASK + "Cite the section(s) you point to.",
         "explain": f"The student highlighted: \"\"\"{(body.selection or '')[:1200]}\"\"\"\n"
                    + (f"Their question: {body.message[:600]}\n" if body.message else "")
                    + "Explain it simply (a brief prerequisite recap only if needed), cite the section(s), then end with ONE "
@@ -139,10 +161,13 @@ def ask(course_id: int, topic_id: int, body: AskIn, db: Session = Depends(get_db
             raise ai_gateway.AIUnavailable("empty reply")
     except ai_gateway.AIUnavailable:
         db.commit()
-        if body.mode != "explain":
+        if body.mode not in ("explain", "ask"):
             raise HTTPException(503, "The tutor is offline right now. Try again in a few minutes.")
         s = _best_section(secs, body.selection or body.message or "")
-        return {"reply_md": "The AI tutor is offline right now. This part of your lesson covers what you highlighted:\n\n"
+        lead = ("The AI tutor is offline right now. Try answering your question yourself from this part of your lesson "
+                "- what does it say about it?" if body.mode == "ask" else
+                "The AI tutor is offline right now. This part of your lesson covers what you highlighted:")
+        return {"reply_md": f"{lead}\n\n"
                             + (f"**{s['title']}**\n\n{s['text'][:900]}" if s else ""),
                 "cited": [{"n": s["n"], "title": s["title"]}] if s else [], "question": "", "flashcard": None, "offline": True}
     valid = {s["n"]: s["title"] for s in secs}

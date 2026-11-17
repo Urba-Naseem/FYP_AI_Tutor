@@ -219,14 +219,17 @@ def walk_to_quiz(client, sh, course_id, clo_id):
     db.close()
 
 
-def take_quiz(client, sh, course_id, clo_id, n_correct, step_id=None):
-    """Start a formative quiz and answer n_correct questions correctly (option 0); returns finish result."""
+def take_quiz(client, sh, course_id, clo_id, n_correct, step_id=None, out_of=5):
+    """Start a formative quiz and answer n_correct of every `out_of` questions correctly; returns the finish result.
+    Quizzes used to have 5 questions and many tests say "4 right" meaning 80%: the count is scaled to the real quiz
+    length (formative quizzes now have 10). Pass out_of=10 for a 10-question quiz to give an exact count."""
     walk_to_quiz(client, sh, course_id, clo_id)
     q = client.post("/api/quiz/start", headers=sh, json={"course_id": course_id, "clo_id": clo_id, "step_id": step_id})
     assert q.status_code == 200, q.text
     q = q.json()
+    n_right = round(n_correct * len(q["questions"]) / out_of)
     for i, question in enumerate(q["questions"]):
-        client.post(f"/api/quiz/attempts/{q['id']}/answer", headers=sh, json={"item_id": question["id"], "choice": right(question) if i < n_correct else wrong(question)})
+        client.post(f"/api/quiz/attempts/{q['id']}/answer", headers=sh, json={"item_id": question["id"], "choice": right(question) if i < n_right else wrong(question)})
     r = client.post(f"/api/quiz/attempts/{q['id']}/finish", headers=sh)
     assert r.status_code == 200, r.text
     return r.json()

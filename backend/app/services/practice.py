@@ -4,6 +4,9 @@
   student's level (same levels as their personal lessons) and avoiding stems they have already practised.
 * Practice never counts toward mastery and never touches the approved question bank, so formative and reteach
   quizzes stay unseen. Students may ask for as many new sets as they like.
+* Each topic (lecture) gets its own questions: the set is written for that topic only, avoids stems the student has
+  already practised on the outcome, and the page restores the latest set of THAT topic.
+* Every question has up to 2 Socratic hints the student can open one at a time; hints never contain the answer.
 * The answer and explanation of a question are sent only after the student answers it.
 * No AI, no practice: if the AI is unavailable the student is told to try again later (nothing is stored).
 """
@@ -25,7 +28,9 @@ AVOID = 40  # recent stems the AI is told not to repeat
 SYSTEM = (
     "You write multiple-choice PRACTICE questions for one university learner. Each question tests understanding of "
     "the given outcome (and topic, when given) at the learner's level, has exactly 4 plausible options with one "
-    "correct answer, and a short explanation of why the correct option is right and the others are wrong. "
+    "correct answer, and a short explanation of why the correct option is right and the others are wrong. Give each "
+    "question 2 short Socratic hints (first a nudge towards the key idea, then a more specific pointer) that NEVER state, "
+    "quote or eliminate options. When a TOPIC is given, every question must be about that topic specifically. "
     "Vary the question types (concept, worked example, spot the error, predict the output). Never repeat a question "
     "from the AVOID list."
 )
@@ -57,11 +62,14 @@ def _clean(raw: list[dict], avoid: set[str]) -> list[dict]:
         if not stem or len(opts) != 4 or len(set(o.lower() for o in opts)) != 4 or not 0 <= ans < 4 or key in seen:
             continue
         seen.add(key)
+        correct = opts[ans].lower()
+        hints = [str(h).strip() for h in (q.get("hints") or []) if str(h).strip()]
+        hints = [h for h in hints if correct not in h.lower()][:2]  # a hint may never give the answer away
         # shuffle the options so the correct answer is not always in the same place
         order = list(range(4))
         random.shuffle(order)
         out.append({"stem": stem, "options": [opts[i] for i in order], "answer_index": order.index(ans),
-                    "explanation": str(q.get("explanation") or "").strip()})
+                    "explanation": str(q.get("explanation") or "").strip(), "hints": hints})
     return out
 
 
@@ -71,7 +79,7 @@ def new_set(db: Session, student, course: Course, clo: CLO, topic: Topic | None 
     level, reason = level_for(db, student.id, course.id, clo)
     avoid = _recent_stems(db, student.id, clo.id)
     prompt = (f"{course_context.outline(db, course, focus=[clo])}\n\nOUTCOME {clo.code}: {clo.description}\n"
-              + (f"TOPIC: {topic.title} - {topic.summary}\n" if topic else "")
+              + (f"TOPIC (write every question about this lecture topic only): {topic.title} - {topic.summary}\n" if topic else "")
               + f"LEARNER LEVEL: {LEVEL_LABEL[level]} ({reason}). {LEVEL_HINT[level]}\n"
               + f"Write {n} practice questions.\n"
               + ("AVOID (already practised):\n" + "\n".join(f"- {a}" for a in avoid) if avoid else ""))
@@ -96,14 +104,14 @@ def out(ps: PracticeSet) -> dict:
     """What the student may see: answers and explanations only for questions already answered."""
     qs = []
     for i, q in enumerate(ps.questions or []):
-        item = {"index": i, "stem": q["stem"], "options": q["options"]}
+        item = {"index": i, "stem": q["stem"], "options": q["options"], "hints": q.get("hints") or []}
         chosen = (ps.answers or {}).get(str(i))
         if chosen is not None:
             item.update(chosen=chosen, correct=chosen == q["answer_index"], correct_index=q["answer_index"],
                         explanation=q["explanation"])
         qs.append(item)
     answered = [q for q in qs if "chosen" in q]
-    return {"id": ps.id, "clo_id": ps.clo_id, "topic_id": ps.topic_id, "questions": qs, "answered": len(answered),
+    return {"id": ps.id, "clo_id": ps.clo_id, "topic_id": ps.topic_id, "created_at": ps.created_at, "questions": qs, "answered": len(answered),
             "correct": sum(1 for q in answered if q["correct"]), "total": len(qs), "counts_toward_mastery": False}
 
 
@@ -118,3 +126,10 @@ def answer(db: Session, student, ps: PracticeSet, index: int, choice: int) -> di
         learning(db, student, "practice_answer", "practice_set", ps.id,
                  {"index": index, "correct": choice == q["answer_index"]}, course_id=ps.course_id)
     return out(ps)
+
+
+def latest(db: Session, student_id: int, clo_id: int, topic_id: int | None) -> PracticeSet | None:
+    """The student's most recent set for this topic (or for the outcome as a whole when no topic)."""
+    q = select(PracticeSet).where(PracticeSet.student_id == student_id, PracticeSet.clo_id == clo_id)
+    q = q.where(PracticeSet.topic_id == topic_id) if topic_id else q.where(PracticeSet.topic_id.is_(None))
+    return db.scalar(q.order_by(PracticeSet.id.desc()).limit(1))

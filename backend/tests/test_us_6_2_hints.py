@@ -1,20 +1,31 @@
-"""US-6.2 Provide guided hints."""
+"""US-6.2 Provide guided hints (reteach quizzes; formative quizzes have no hints)."""
 from app.services import llm
 
 from .helpers import walk_to_quiz
 from .helpers import right, wrong
-from .helpers import add_approved_source, active_course_with_student, make_items
+from .helpers import active_course_with_student, make_items
+from .test_us_6_3_reteach import ctx as reteach_ctx
+from .test_us_6_3_reteach import reteach_step
 
 
 def ctx(client, source=True):
-    c = active_course_with_student(client)
-    if source:
-        add_approved_source(client, c["ih"], c["ih"], c["course"]["id"])
-    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=5)
-    walk_to_quiz(client, c["sh"], c["course"]["id"], c["course"]["clos"][0]["id"])  # quizzes open in path order: start the path first
-    q = client.post("/api/quiz/start", headers=c["sh"], json={"course_id": c["course"]["id"], "clo_id": c["course"]["clos"][0]["id"]}).json()
+    """A reteach quiz in progress (hints live there)."""
+    c = reteach_ctx(client, source=source)
+    cyc = client.get(f"/api/reteach/{c['cid']}/clo/{c['clo']['id']}", headers=c["sh"]).json()
+    q = client.post(f"/api/reteach/cycles/{cyc['id']}/quiz", headers=c["sh"], json={"step_id": reteach_step(client, c)["id"]}).json()
     c["quiz"], c["q"] = q, q["questions"][0]
     return c
+
+
+def test_no_hints_in_formative_quizzes(client):
+    c = active_course_with_student(client)
+    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=10)
+    clo = c["course"]["clos"][0]
+    walk_to_quiz(client, c["sh"], c["course"]["id"], clo["id"])
+    q = client.post("/api/quiz/start", headers=c["sh"], json={"course_id": c["course"]["id"], "clo_id": clo["id"]}).json()
+    assert q["kind"] == "formative" and not any(x["hints_available"] for x in q["questions"])
+    r = client.post(f"/api/quiz/attempts/{q['id']}/hint", headers=c["sh"], json={"item_id": q["questions"][0]["id"]})
+    assert r.status_code == 409 and "no hints" in r.json()["detail"]
 
 
 def hint(client, c):
@@ -60,7 +71,9 @@ def test_hints_recorded_with_answer_and_events(client):
     hint(client, c)
     client.post(f"/api/quiz/attempts/{c['quiz']['id']}/answer", headers=c["sh"], json={"item_id": c["q"]["id"], "choice": right(c["q"])})
     assert hint(client, c).status_code == 409  # no hints after answering
-    view = client.get(f"/api/quiz/attempts/{c['quiz']['id']}", headers=c["sh"]).json()
+    for x in c["quiz"]["questions"][1:]:
+        client.post(f"/api/quiz/attempts/{c['quiz']['id']}/answer", headers=c["sh"], json={"item_id": x["id"], "choice": wrong(x)})
+    view = client.post(f"/api/quiz/attempts/{c['quiz']['id']}/finish", headers=c["sh"]).json()
     assert view["questions"][0]["answer"]["hints_used"] == 2
     assert client.get("/api/audit?action=learn.hint_requested", headers=c["ah"]).json()["total"] == 2
 

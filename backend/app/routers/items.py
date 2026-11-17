@@ -24,6 +24,7 @@ class GenerateIn(BaseModel):
     purpose: str = "diagnostic"
     clo_id: int | None = None  # None = every CLO of the course
     count: int = Field(3, ge=1, le=10)
+    question_type: str = "mcq"  # mcq | written (true/false, fill in the blank, short answer - formative only)
 
 
 class ItemIn(BaseModel):
@@ -31,8 +32,12 @@ class ItemIn(BaseModel):
     clo_id: int
     purpose: str
     stem: str
-    options: list[str]
-    answer_index: int
+    type: str = "mcq"            # mcq | true_false | fill_blank | short_answer (written types: formative only)
+    options: list[str] = []
+    answer_index: int = 0
+    answer: str = ""             # written types: true/false, the blank's answer, or a model answer
+    accepted: list[str] = []     # fill_blank: other acceptable answers
+    key_points: list[str] = []   # short_answer: what a good answer must contain
     explanation: str = ""
     hints: list[str] = []
     difficulty: int = Field(2, ge=1, le=3)
@@ -42,6 +47,9 @@ class ItemPatch(BaseModel):
     stem: str | None = None
     options: list[str] | None = None
     answer_index: int | None = None
+    answer: str | None = None
+    accepted: list[str] | None = None
+    key_points: list[str] | None = None
     explanation: str | None = None
     hints: list[str] | None = None
     difficulty: int | None = Field(None, ge=1, le=3)
@@ -60,12 +68,21 @@ class ConfigIn(BaseModel):
 def item_out(db: Session, it: Item, with_key: bool = True) -> dict:
     clo = db.get(CLO, it.clo_id)
     d = {"id": it.id, "course_id": it.course_id, "clo_id": it.clo_id, "clo_code": clo.code if clo else None,
-         "purpose": it.purpose, "stem": it.stem, "options": it.options, "difficulty": it.difficulty, "status": it.status,
+         "purpose": it.purpose, "type": it.kind, "stem": it.stem, "options": it.options, "difficulty": it.difficulty, "status": it.status,
          "origin": it.origin, "version_no": it.version_no, "supersedes_id": it.supersedes_id, "created_at": it.created_at,
          "review_note": it.review_note, "source_chunk_ids": it.source_chunk_ids, "ai_call_id": it.ai_call_id}
     if with_key:
         d.update(answer_index=it.answer, explanation=it.explanation, hints=it.hints)
+        if it.kind != "mcq":
+            k = it.key
+            d.update(answer=k.get("answer", "true" if it.answer == 0 else "false") if it.kind == "true_false" else k.get("answer", ""),
+                     accepted=k.get("accepted", []), key_points=k.get("key_points", []))
     return d
+
+
+BAD_ITEM = ("A multiple-choice question needs a stem, exactly 4 distinct options and a valid answer index; a true/false "
+            "question needs a statement and true or false; fill in the blank needs a blank (_____) and its answer; a short "
+            "answer needs a model answer")
 
 
 def _course(db, user, cid, write=False) -> Course:
@@ -81,10 +98,14 @@ def _course(db, user, cid, write=False) -> Course:
 def _new_item(db, user, course, clo, purpose, data, origin, ai_call_id=None, supersedes=None, version=1) -> Item:
     v = gen.validate(data)
     if not v:
-        raise HTTPException(422, "Item needs a stem, exactly 4 distinct options and a valid answer index")
-    # Assessment questions ALWAYS need a teacher's approval, also in automation mode (the AI only drafts them).
+        raise HTTPException(422, BAD_ITEM)
+    if v.get("qtype") and purpose != "formative":
+        raise HTTPException(422, "True/false, fill-in-the-blank and short-answer questions are for formative quizzes only")
+    # Assessment questions ALWAYS need a teacher's approval, also in automation mode (the AI only drafts them) - this
+    # holds for every question type.
     it = Item(course_id=course.id, clo_id=clo.id, purpose=purpose, stem=v["stem"], options=v["options"],
               answer_index=str(v["answer_index"]), explanation=v["explanation"], hints=v["hints"], difficulty=v["difficulty"],
+              qtype=v.get("qtype"), answer_key=v.get("answer_key"),
               status="pending", origin=origin, version_no=version, supersedes_id=supersedes,
               source_chunk_ids=data.get("chunk_ids", []), ai_call_id=ai_call_id, created_by=getattr(user, "id", None))
     db.add(it)
@@ -105,7 +126,12 @@ def generate(body: GenerateIn, db: Session = Depends(get_db), user: User = Depen
     created, problems, origins = [], [], set()
     for clo in clos:
         try:
-            items, origin, call_id = gen.generate_for_clo(db, user, course, clo, body.count, body.purpose)
+            if body.question_type == "written":
+                if body.purpose != "formative":
+                    raise HTTPException(422, "Written questions are for formative quizzes only")
+                items, origin, call_id = gen.generate_written_for_clo(db, user, course, clo, body.count)
+            else:
+                items, origin, call_id = gen.generate_for_clo(db, user, course, clo, body.count, body.purpose)
         except ValueError as e:
             problems.append(str(e))
             db.commit()  # never hold the database write lock while waiting for the next AI call
@@ -157,15 +183,23 @@ def edit(iid: int, body: ItemPatch, db: Session = Depends(get_db), user: User = 
     if not it:
         raise HTTPException(404, "Item not found")
     course = _course(db, user, it.course_id, write=True)
-    merged = {"stem": it.stem, "options": it.options, "answer_index": it.answer, "explanation": it.explanation,
-              "hints": it.hints, "difficulty": it.difficulty, "chunk_ids": it.source_chunk_ids}
-    merged.update({k: v for k, v in body.model_dump(exclude_unset=True).items()})
+    key = it.key
+    merged = {"type": it.kind, "stem": it.stem, "options": it.options, "answer_index": it.answer, "explanation": it.explanation,
+              "hints": it.hints, "difficulty": it.difficulty, "chunk_ids": it.source_chunk_ids,
+              "answer": key.get("answer", ""), "accepted": key.get("accepted", []), "key_points": key.get("key_points", [])}
+    if it.kind == "true_false" and not merged["answer"]:
+        merged["answer"] = "true" if it.answer == 0 else "false"
+    patch = body.model_dump(exclude_unset=True)
+    if it.kind == "true_false" and "answer_index" in patch and "answer" not in patch:
+        patch["answer"] = "true" if patch["answer_index"] == 0 else "false"
+    merged.update(patch)
     if it.status == "pending":
         v = gen.validate(merged)
         if not v:
-            raise HTTPException(422, "Item needs a stem, exactly 4 distinct options and a valid answer index")
+            raise HTTPException(422, BAD_ITEM)
         it.stem, it.options, it.answer_index = v["stem"], v["options"], str(v["answer_index"])
         it.explanation, it.hints, it.difficulty = v["explanation"], v["hints"], v["difficulty"]
+        it.answer_key = v.get("answer_key")
         record(db, user, "items.edited", "item", it.id, {"fields": list(body.model_dump(exclude_unset=True))}, course_id=course.id)
         db.commit()
         return item_out(db, it)

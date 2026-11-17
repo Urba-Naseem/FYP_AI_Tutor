@@ -2,6 +2,7 @@
 import json
 import ssl
 import time
+
 import urllib.request
 
 BASE = "https://localhost:5173"

@@ -6,10 +6,10 @@ from .helpers import active_course_with_student, login, make_items, make_user, t
 
 def ctx(client):
     c = active_course_with_student(client)
-    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=6)
+    make_items(client, c["ih"], c["course"], purpose="formative", per_clo=10)
     c["cid"] = c["course"]["id"]
     c["clo"] = c["course"]["clos"][0]
-    c["attempt"] = take_quiz(client, c["sh"], c["cid"], c["clo"]["id"], 2)  # 2/5 = 40%, not attained
+    c["attempt"] = take_quiz(client, c["sh"], c["cid"], c["clo"]["id"], 4, out_of=10)  # 4/10 = 40%, not attained
     return c
 
 
@@ -21,7 +21,7 @@ def test_submit_routes_to_current_instructor(client):
     c = ctx(client)
     assert appeal(client, c, "too short").status_code == 422
     r = appeal(client, c)
-    assert r.status_code == 201 and r.json()["status"] == "submitted" and r.json()["original_score"] == "2/5"
+    assert r.status_code == 201 and r.json()["status"] == "submitted" and r.json()["original_score"] == "4/10"
     assert appeal(client, c).status_code == 409  # one open appeal per attempt
     assert any(t["kind"] == "appeal" for t in client.get("/api/reviews", headers=c["ih"]).json())
     elig = client.get(f"/api/appeals/eligible/{c['cid']}", headers=c["sh"]).json()
@@ -33,8 +33,8 @@ def test_upheld_appeal_amends_grade_in_controlled_way(client):
     aid = appeal(client, c).json()["id"]
     client.post(f"/api/appeals/{aid}/start-review", headers=c["ih"])
     assert client.post(f"/api/appeals/{aid}/resolve", headers=c["ih"], json={"decision": "upheld", "resolution": "Option B also correct"}).status_code == 422
-    r = client.post(f"/api/appeals/{aid}/resolve", headers=c["ih"], json={"decision": "upheld", "resolution": "Option B is also correct; key fixed", "new_correct": 3})
-    assert r.status_code == 200 and r.json()["amended_score"] == "3/5"
+    r = client.post(f"/api/appeals/{aid}/resolve", headers=c["ih"], json={"decision": "upheld", "resolution": "Option B is also correct; key fixed", "new_correct": 6})
+    assert r.status_code == 200 and r.json()["amended_score"] == "6/10"
     m = client.get(f"/api/mastery/course/{c['cid']}/student/{c['student'].id}", headers=c["ih"]).json()["clos"][0]
     statuses = sorted((e["version_no"], e["status"]) for e in m["evidence"])
     assert statuses == [(1, "superseded"), (2, "active")]  # original kept, new version active
@@ -48,7 +48,7 @@ def test_rejected_appeal_notifies_student(client):
     aid = appeal(client, c).json()["id"]
     client.post(f"/api/appeals/{aid}/resolve", headers=c["ih"], json={"decision": "rejected", "resolution": "Only option A is correct per the notes"})
     notes = client.get("/api/notifications", headers=c["sh"]).json()
-    assert notes[0]["title"] == "Appeal rejected" and "2/5 stands" in notes[0]["body"]
+    assert notes[0]["title"] == "Appeal rejected" and "4/10 stands" in notes[0]["body"]
     assert "Appeal rejected" in list_outbox()[0]["subject"]
     client.post(f"/api/notifications/{notes[0]['id']}/read", headers=c["sh"])
     assert client.get("/api/notifications", headers=c["sh"]).json()[0]["read"] is True

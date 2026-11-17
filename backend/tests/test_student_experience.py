@@ -86,14 +86,16 @@ def test_options_are_shuffled_per_attempt_with_balanced_answer_positions(client)
         quizzes.append(client.post("/api/quiz/start", headers=h, json={"course_id": cid, "clo_id": clo}).json())
     q = quizzes[0]
     letters = [right(x) for x in q["questions"]]
-    # 5 questions over 4 options: every letter is used and none more than twice - never "always B"
-    assert set(letters[:4]) == {0, 1, 2, 3} and max(letters.count(k) for k in range(4)) <= 2
-    # answering in the shown order is marked correctly, and the review shows the shown positions
+    # 10 questions over 4 options: every letter is used and none more than 3 times - never "always B"
+    assert set(letters[:4]) == {0, 1, 2, 3} and max(letters.count(k) for k in range(4)) <= 3
+    # answering in the shown order is marked correctly (on submission), and the review shows the shown positions
     x = q["questions"][0]
-    r = client.post(f"/api/quiz/attempts/{q['id']}/answer", headers=c["sh"], json={"item_id": x["id"], "choice": right(x)}).json()
-    assert r["correct"] is True and r["correct_index"] == right(x)
+    for y in q["questions"]:
+        client.post(f"/api/quiz/attempts/{q['id']}/answer", headers=c["sh"], json={"item_id": y["id"], "choice": right(y)})
     again = client.get(f"/api/quiz/attempts/{q['id']}", headers=c["sh"]).json()["questions"][0]
-    assert again["options"] == x["options"] and again["answer"]["chosen"] == right(x)  # stable order on reload
+    assert again["options"] == x["options"] and again["response"]["choice"] == right(x)  # stable order on reload
+    done = client.post(f"/api/quiz/attempts/{q['id']}/finish", headers=c["sh"]).json()["questions"][0]
+    assert done["answer"]["correct"] is True and done["answer"]["correct_index"] == right(x) and done["answer"]["chosen"] == right(x)
     # two students rarely see the same option order for the same item
     same = [a for a in quizzes[0]["questions"] for b in quizzes[1]["questions"] if a["id"] == b["id"]]
     assert all(set(a["options"]) for a in same)

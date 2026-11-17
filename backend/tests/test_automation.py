@@ -31,10 +31,13 @@ def fake_ai(monkeypatch):
         if "multiple-choice" in sysl:
             items = [{"stem": f"Question number {i} about this outcome?", "options": [f"right {i}", f"wrong a{i}", f"wrong b{i}", f"wrong c{i}"],
                       "answer_index": 0, "explanation": "Because it follows from the definition.", "hints": ["Think about the definition."],
-                      "difficulty": i % 3 + 1} for i in range(10)]
+                      "difficulty": i % 3 + 1} for i in range(12)]
             if "QUESTION SET FOR" in prompt:  # batched: every question type for one CLO in one reply
-                text = json.dumps({p: [dict(x, stem=f"{p} {x['stem']}") for x in items]
-                                   for p in ("diagnostic", "formative", "reteach")})
+                written = [{"type": t, "stem": f"Written {t} question {i} about this outcome _____?", "answer": "true",
+                            "key_points": ["a point"], "explanation": "Because."}
+                           for i in range(3) for t in ("true_false", "fill_blank", "short_answer")]
+                text = json.dumps({**{p: [dict(x, stem=f"{p} {x['stem']}") for x in items]
+                                      for p in ("diagnostic", "formative", "reteach")}, "written": written})
             else:
                 text = json.dumps({"items": items})
         elif "curriculum design" in sysl:
